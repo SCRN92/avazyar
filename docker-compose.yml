@@ -1,0 +1,24 @@
+services:
+  avazyar:
+    build: .
+    image: avazyar:0.1
+    container_name: avazyar
+    restart: unless-stopped
+    ports:
+      # localhost only: the host's nginx terminates TLS and proxies in
+      - "127.0.0.1:${AVAZYAR_PORT:-8793}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: 0.5
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
