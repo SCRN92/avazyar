@@ -7,49 +7,50 @@
 // kind: 'ear'  درس گوش، بدون میکروفون
 //   quiz: 'updown' با gaps = بازه‌ی فاصله‌ی دو نت (نیم‌پرده) در هر سطح
 //   quiz: 'koron'  با roots = نت‌های شروع در هر سطح
+// mins: زمان تقریبی درس به دقیقه (برای چیدن «تمرین امروز»)
 import { fitRoot, stepName } from './notes.js';
 
 export const LESSONS = [
   {
-    id: 'warmup', kind: 'warmup', icon: '🌬️',
+    id: 'warmup', kind: 'warmup', icon: '🌬️', mins: 2,
     title: 'گرم کردن و سلامت صدا', sub: 'قبل از هر تمرین، حدود ۲ دقیقه',
   },
   {
-    id: 'range', kind: 'range', icon: '📏',
+    id: 'range', kind: 'range', icon: '📏', mins: 1,
     title: 'محدوده‌ی صدای من', sub: 'پایین‌ترین و بالاترین نت راحتت',
   },
   {
-    id: 'home', kind: 'home', icon: '🏠',
+    id: 'home', kind: 'home', icon: '🏠', mins: 1,
     title: 'نت خانه', sub: 'راحت‌ترین نت صدات رو پیدا کن',
   },
   {
-    id: 'sustain', kind: 'sustain', icon: '🫁',
+    id: 'sustain', kind: 'sustain', icon: '🫁', mins: 1,
     title: 'نفس و نگه داشتن نت', sub: 'یه نت رو آروم و یکنواخت نگه دار',
   },
   {
-    id: 'match', kind: 'seq', icon: '🎯', tols: [35, 25, 15],
+    id: 'match', kind: 'seq', icon: '🎯', mins: 1, tols: [35, 25, 15],
     title: 'هم‌صدا شدن با نت', sub: 'بشنو و همون رو بخون',
     intro: 'آوازیار یه نت پخش می‌کنه. خوب گوش کن، بعد با «آ» یا «او» همون نت رو بخون و نگهش دار. هر وقت خطت سبز شد، یعنی دقیقاً روی نتی.',
     notes: { from: 'home', steps: [0, 2, -2, 4, 1] },
   },
   {
-    id: 'updown', kind: 'ear', icon: '👂', quiz: 'updown', gaps: [[3, 5], [1, 2], [0.5, 1]],
+    id: 'updown', kind: 'ear', icon: '👂', mins: 1, quiz: 'updown', gaps: [[3, 5], [1, 2], [0.5, 1]],
     title: 'گوش: بالاتر یا پایین‌تر؟', sub: 'بدون خوندن، فقط با گوش',
     intro: 'دو تا نت پشت‌سرهم پخش می‌شه. بگو نت دوم از اولی بالاتره (زیرتر) یا پایین‌تر (بم‌تر). برای این تمرین میکروفون لازم نیست.',
   },
   {
-    id: 'scale', kind: 'seq', icon: '🪜', tols: [35, 25, 15],
+    id: 'scale', kind: 'seq', icon: '🪜', mins: 1.5, tols: [35, 25, 15],
     title: 'دو، ر، می', sub: 'اولین گام: بالا رفتن و برگشتن',
     intro: 'دو، ر، می، فا، سل… و برگشت. این پایه‌ی همه‌ی ملودی‌هاست. هر نت رو بشنو و تکرار کن.',
     notes: { root: 0, steps: [0, 2, 4, 5, 7, 5, 4, 2, 0] },
   },
   {
-    id: 'koron', kind: 'ear', icon: '🎼', quiz: 'koron', roots: [[2], [2, 9, 7]],
+    id: 'koron', kind: 'ear', icon: '🎼', mins: 1, quiz: 'koron', roots: [[2], [2, 9, 7]],
     title: 'گوش: می یا می کرن؟', sub: 'رنگ ربع‌پرده رو با گوش بشناس',
     intro: 'اول یه نت پایه پخش می‌شه و بعد نت دوم. نت دوم یا یه پرده‌ی کامل بالاتره، یا یه ربع‌پرده کمتر از اون (کرن). بگو کدوم رو شنیدی. برای این تمرین میکروفون لازم نیست.',
   },
   {
-    id: 'shur', kind: 'seq', icon: '🎶', tols: [25, 20, 15],
+    id: 'shur', kind: 'seq', icon: '🎶', mins: 1.5, tols: [25, 20, 15],
     title: 'اولین ربع‌پرده: حال‌وهوای شور', sub: 'ر، می کرن، فا',
     intro: 'موسیقی ایرانی نت‌هایی داره که بین دو کلید پیانو هستن. «می کرن» حدود یه ربع‌پرده پایین‌تر از «می»‌ه، و همون رنگ آشنای دستگاه شوره. دقت این درس سخت‌گیرانه‌تره.',
     notes: { root: 2, steps: [0, 1.5, 3, 5, 3, 1.5, 0] },
@@ -134,4 +135,53 @@ export function earQuestion(lesson, level, voice, rnd = Math.random) {
     choices: [{ label: stepName(root + 1.5).fa, right: koron }, { label: stepName(root + 2).fa, right: !koron }],
     names: [stepName(root).fa, stepName(second).fa],
   };
+}
+
+// ---------- تمرین امروز ----------
+
+export const SESSION_LENGTHS = [5, 10, 15];
+const RETEST_AFTER = 30 * 24 * 3600 * 1000; // محدوده‌ی صدا با تمرین عوض می‌شود؛ ماهی یک بار دوباره می‌سنجیم
+const PRACTICE = ['seq', 'ear', 'sustain'];
+
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+
+// برنامه‌ی یک جلسه‌ی کوتاه: گرم کردن، یک چیز تازه، و بعد درس‌های قبلی از ضعیف‌ترین.
+// خروجی: [{ id, why }] که why یکی از warmup، new، retest، weak، practice است.
+export function planSession(state, minutes, now = Date.now()) {
+  const byId = (id) => LESSONS.find((l) => l.id === id);
+  const rec = (l) => state.lessons[l.id];
+  const plan = [];
+  let left = minutes;
+  const fits = (l) => l.mins <= left + 0.5;
+  const add = (l, why) => {
+    plan.push({ id: l.id, why });
+    left -= l.mins;
+  };
+
+  // ۱. گرم کردن، مگر اینکه امروز انجام شده باشد
+  if (!state.sessions.some((x) => x.lesson === 'warmup' && sameDay(x.date, now))) add(byId('warmup'), 'warmup');
+
+  // ۲. یک چیز تازه؛ اگر چیز تازه‌ای نمانده، هر از گاهی سنجش دوباره‌ی محدوده‌ی صدا
+  const unseen = LESSONS.filter((l) => l.kind !== 'warmup' && !rec(l)?.count);
+  if (unseen.length) add(unseen.shift(), 'new');
+  else if (state.range?.date != null && now - state.range.date > RETEST_AFTER) add(byId('range'), 'retest');
+
+  // ۳. بقیه‌ی وقت: درس‌های قبلی، ضعیف‌ترین اول؛ هر درس حداکثر دو بار و نه پشت‌سرهم
+  const pool = LESSONS.filter((l) => PRACTICE.includes(l.kind) && rec(l)?.count)
+    .sort((a, b) => (rec(a).best ?? 0) - (rec(b).best ?? 0));
+  for (let round = 0; round < 2; round++) {
+    for (const l of pool) {
+      if (fits(l) && plan.at(-1)?.id !== l.id) add(l, (rec(l).best ?? 0) < PASS ? 'weak' : 'practice');
+    }
+  }
+
+  // ۴. اگر هنوز وقت مانده (کاربر تازه‌کار)، درس‌های تازه‌ی بعدی به ترتیب
+  for (const l of unseen) if (fits(l)) add(l, 'new');
+
+  // ۵. و اگر باز هم وقت مانده، یک دور دیگر روی همان درس‌های تازه
+  const times = (id) => plan.filter((x) => x.id === id).length;
+  for (const l of plan.map((x) => byId(x.id))) {
+    if (PRACTICE.includes(l.kind) && times(l.id) < 2 && fits(l) && plan.at(-1).id !== l.id) add(l, 'practice');
+  }
+  return plan;
 }

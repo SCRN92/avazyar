@@ -314,6 +314,16 @@ a { color: var(--primary); text-decoration: none; }
 .opt input { width: 20px; height: 20px; accent-color: var(--primary); }
 
 .back { display: inline-block; margin-bottom: 4px; font-weight: 700; }
+.session-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--accent-ink);
+  margin-bottom: 4px;
+}
 
 .welcome { text-align: center; padding-top: 24px; }
 .welcome .card { text-align: start; }

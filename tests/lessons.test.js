@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LESSONS, LEVEL_UP, QUARTER_MIN_TOL, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion } from '../js/lessons.js';
+import { LESSONS, LEVEL_UP, QUARTER_MIN_TOL, SESSION_LENGTHS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from '../js/lessons.js';
 
 const lesson = (id) => LESSONS.find((l) => l.id === id);
-const state = (over = {}) => ({ settings: { voice: 'male' }, range: null, home: null, lessons: {}, ...over });
+const state = (over = {}) => ({ settings: { voice: 'male' }, range: null, home: null, lessons: {}, sessions: [], ...over });
 const MALE = { low: 45, high: 62, home: 52 };
 const FEMALE = { low: 57, high: 72, home: 63 };
 
@@ -132,4 +132,73 @@ test('koron questions: a whole tone or a quarter-tone less, labelled with real n
   const first = new Set();
   for (let i = 0; i < 50; i++) first.add(earQuestion(l, 0, MALE, rnd).choices.map((c) => c.label).join('/'));
   assert.deepEqual([...first], ['می کرن/می']);
+});
+
+// ---------- تمرین امروز ----------
+
+const NOW = new Date(2026, 9, 13, 18).getTime();
+const HOUR = 3600 * 1000;
+const rec = (best, count = 3) => ({ best, last: best, count, level: 0 });
+const allDone = (bests = {}) => Object.fromEntries(LESSONS.map((l) => [l.id, rec(bests[l.id] ?? 90)]));
+const minutesOf = (plan) => plan.reduce((a, x) => a + lesson(x.id).mins, 0);
+const ids = (plan) => plan.map((x) => x.id);
+
+test('every lesson has an estimated length', () => {
+  for (const l of LESSONS) assert.ok(l.mins > 0 && l.mins <= 3, `${l.id}: mins ${l.mins}`);
+});
+
+test('a brand-new learner starts with the warm-up and the lessons in order', () => {
+  const plan = planSession(state(), 5, NOW);
+  assert.deepEqual(ids(plan), ['warmup', 'range', 'home', 'sustain']);
+  assert.deepEqual(plan.map((x) => x.why), ['warmup', 'new', 'new', 'new']);
+});
+
+test('the warm-up is skipped if it was already done today, but not if it was yesterday', () => {
+  const today = planSession(state({ sessions: [{ date: NOW - 2 * HOUR, lesson: 'warmup', score: null }] }), 5, NOW);
+  assert.ok(!ids(today).includes('warmup'));
+  const yesterday = planSession(state({ sessions: [{ date: NOW - 30 * HOUR, lesson: 'warmup', score: null }] }), 5, NOW);
+  assert.equal(yesterday[0].id, 'warmup');
+});
+
+test('practised lessons come weakest first, with exactly one new thing', () => {
+  const lessons = { warmup: rec(null), range: rec(null), home: rec(90), sustain: rec(95), match: rec(40), updown: rec(85) };
+  const plan = planSession(state({ lessons }), 10, NOW);
+  assert.deepEqual(ids(plan).slice(0, 5), ['warmup', 'scale', 'match', 'updown', 'sustain']);
+  assert.deepEqual(plan.slice(0, 5).map((x) => x.why), ['warmup', 'new', 'weak', 'practice', 'practice']);
+  assert.equal(plan.filter((x) => x.why === 'new' && x.id === 'scale').length, 1);
+});
+
+test('sessions fill the time asked for without running far over', () => {
+  for (const minutes of SESSION_LENGTHS) {
+    for (const lessons of [{}, allDone(), allDone({ match: 20, shur: 30 })]) {
+      const plan = planSession(state({ lessons, range: { low: 45, high: 62, date: NOW } }), minutes, NOW);
+      const total = minutesOf(plan);
+      assert.ok(total <= minutes + 0.5, `${minutes} min session runs ${total} min`);
+      assert.ok(total >= minutes - 1.5, `${minutes} min session is only ${total} min`);
+      assert.ok(plan.length >= 2);
+    }
+  }
+});
+
+test('no lesson appears twice in a row or more than twice', () => {
+  const plan = planSession(state({ lessons: allDone(), range: { low: 45, high: 62, date: NOW } }), 15, NOW);
+  const counts = {};
+  plan.forEach((x, i) => {
+    counts[x.id] = (counts[x.id] || 0) + 1;
+    if (i) assert.notEqual(x.id, plan[i - 1].id);
+  });
+  assert.ok(Math.max(...Object.values(counts)) <= 2);
+  assert.ok(!ids(plan).includes('range') && !ids(plan).includes('home'), 'setup lessons are not repeated as practice');
+});
+
+test('the range test comes back after a month, once everything has been seen', () => {
+  const old = { low: 45, high: 62, date: NOW - 40 * 24 * HOUR };
+  const plan = planSession(state({ lessons: allDone(), range: old }), 10, NOW);
+  assert.deepEqual(plan[1], { id: 'range', why: 'retest' });
+  const recent = planSession(state({ lessons: allDone(), range: { ...old, date: NOW - 5 * 24 * HOUR } }), 10, NOW);
+  assert.ok(!ids(recent).includes('range'));
+});
+
+test('every planned step is a real lesson', () => {
+  for (const x of planSession(state({ lessons: allDone() }), 15, NOW)) assert.ok(lesson(x.id), x.id);
 });

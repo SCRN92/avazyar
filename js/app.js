@@ -2,7 +2,7 @@ import { PitchInput, DEFAULT_GATE, gateFor, micVerdict } from './pitch.js';
 import { playTone, startDrone } from './synth.js';
 import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fold } from './notes.js';
 import { store, recordSession, setRange, setLevel, recordSustain, bestSustain, streak, exportData, importData } from './store.js';
-import { LESSONS, PASS, EAR_QUESTIONS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion } from './lessons.js';
+import { LESSONS, PASS, EAR_QUESTIONS, SESSION_LENGTHS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from './lessons.js';
 import { SustainTracker } from './exercise.js';
 import { Lane } from './lane.js';
 
@@ -104,6 +104,36 @@ function stopMic() {
 function finishSession(lessonId, score) {
   recordSession(lessonId, score);
   navigator.storage?.persist?.()?.catch(() => {});
+  const step = sessionStep();
+  if (step?.id === lessonId) {
+    step.done = true;
+    if (score != null) step.score = Math.max(step.score ?? 0, score);
+  }
+}
+
+// ---------- تمرین امروز ----------
+
+// جلسه‌ی در حال انجام: { plan: [{ id, why, done, score }], index, startedAt }. فقط در حافظه می‌ماند.
+let session = null;
+const SESSION_MAX_AGE = 3 * 3600 * 1000;
+
+function activeSession() {
+  if (session && Date.now() - session.startedAt > SESSION_MAX_AGE) session = null;
+  return session;
+}
+
+const sessionStep = () => activeSession()?.plan[session.index];
+const inSession = (L) => sessionStep()?.id === L.id;
+const lessonById = (id) => LESSONS.find((l) => l.id === id);
+
+// دکمه‌ی اصلی بعد از تمام شدن یک درس: در «تمرین امروز» به قدم بعد می‌رود، وگرنه همان مقصد همیشگی
+function nextLink(L, cls, href, label) {
+  if (inSession(L)) {
+    const next = session.plan[session.index + 1];
+    href = '#/session/next';
+    label = next ? `بعدی: ${lessonById(next.id).title}` : 'پایان تمرین امروز';
+  }
+  return `<a class="btn primary ${cls}" href="${href}">${esc(label)}</a>`;
 }
 
 function micError(e) {
@@ -149,6 +179,7 @@ const routes = {
   settings: viewSettings,
   mic: viewMic,
   lesson: viewLesson,
+  session: viewSession,
 };
 
 let routed = false;
@@ -214,7 +245,7 @@ function viewWelcome() {
 
 function viewHome() {
   const s = store.get();
-  const next = suggestNext(s);
+  const step = sessionStep();
   const rangeText = s.range ? `${stepName(s.range.low).fa} تا ${stepName(s.range.high).fa}` : '؟';
   // آیفون پیشنهاد نصب خودکار ندارد؛ خودمان راهش را نشان می‌دهیم
   const iosHint = isIOS && !isStandalone() && !s.settings.hideInstallHint;
@@ -237,10 +268,16 @@ function viewHome() {
       <div class="stat"><b class="sm">${esc(rangeText)}</b><span>محدوده‌ی صدا</span></div>
     </section>
     <section class="card today">
-      <p class="eyebrow">پیشنهاد امروز</p>
-      <h2>${next.icon} ${esc(next.title)}</h2>
-      <p class="muted">${esc(next.sub)}</p>
-      <a class="btn primary block" href="#/lesson/${next.id}">شروع</a>
+      <p class="eyebrow">تمرین امروز</p>
+      ${step ? `
+      <h2>${lessonById(step.id).icon} ${esc(lessonById(step.id).title)}</h2>
+      <p class="muted">قدم ${fa(session.index + 1)} از ${fa(session.plan.length)}</p>
+      <a class="btn primary block" href="#/session">ادامه</a>` : `
+      <h2>چقدر وقت داری؟</h2>
+      <p class="muted">یه برنامه‌ی کوتاه برات می‌چینیم: گرم کردن، یه چیز تازه، و مرور جاهایی که تمرین بیشتری می‌خوان.</p>
+      <div class="row">
+        ${SESSION_LENGTHS.map((m) => `<a class="btn grow${m === 10 ? ' primary' : ''}" href="#/session/${m}">${fa(m)} دقیقه</a>`).join('')}
+      </div>`}
     </section>
     <h2 class="h3 section-title">درس‌ها</h2>
     <ol class="lessons">
@@ -362,7 +399,76 @@ function viewTuner() {
 }
 
 function lessonHead(L) {
-  return `<a class="back" href="#/">→ بازگشت</a><h1 class="page-title">${L.icon} ${esc(L.title)}</h1>`;
+  const top = inSession(L)
+    ? `<nav class="session-bar" aria-label="تمرین امروز">
+        <span>تمرین امروز · قدم ${fa(session.index + 1)} از ${fa(session.plan.length)}</span>
+        <span><a href="#/session/next">رد کن</a> · <a href="#/session/end">پایان</a></span>
+      </nav>`
+    : '<a class="back" href="#/">→ بازگشت</a>';
+  return `${top}<h1 class="page-title">${L.icon} ${esc(L.title)}</h1>`;
+}
+
+const WHY = { warmup: 'گرم کردن', new: 'تازه', retest: 'سنجش دوباره', weak: 'تمرین بیشتر', practice: 'مرور' };
+
+function viewSession(arg) {
+  const s = activeSession();
+  // «بعدی» و «پایان» فقط جلسه را جلو می‌برند و در تاریخچه‌ی مرورگر نمی‌مانند، تا دکمه‌ی برگشت دوباره اجراشان نکند
+  if (arg === 'next' || arg === 'end') {
+    if (!s) return location.replace('#/');
+    if (arg === 'next') s.index++;
+    if (arg === 'end' || s.index >= s.plan.length) return location.replace('#/session/done');
+    return location.replace(`#/lesson/${s.plan[s.index].id}`);
+  }
+  if (arg === 'done') return sessionSummary();
+  if (s) return location.replace(`#/lesson/${s.plan[s.index].id}`);
+
+  const minutes = SESSION_LENGTHS.includes(Number(arg)) ? Number(arg) : 10;
+  const plan = planSession(store.get(), minutes);
+  const total = plan.reduce((a, x) => a + lessonById(x.id).mins, 0);
+  main.innerHTML = `
+    <a class="back" href="#/">→ بازگشت</a>
+    <h1 class="page-title">تمرین امروز</h1>
+    <div class="row" role="group" aria-label="مدت تمرین">
+      ${SESSION_LENGTHS.map((m) => `<a class="btn grow${m === minutes ? ' primary' : ''}" href="#/session/${m}"${m === minutes ? ' aria-current="true"' : ''}>${fa(m)} دقیقه</a>`).join('')}
+    </div>
+    <ol class="steps">
+      ${plan.map((x) => {
+        const L = lessonById(x.id);
+        return `<li><span>${L.icon} ${esc(L.title)}</span><span class="muted small">${WHY[x.why]}</span></li>`;
+      }).join('')}
+    </ol>
+    <p class="muted small">${fa(plan.length)} قدم، حدود ${fa(Math.round(total))} دقیقه. هر قدم رو می‌تونی رد کنی یا هر وقت خواستی تمومش کنی.</p>
+    <button class="btn primary block" id="start">شروع</button>`;
+  $('#start').onclick = () => {
+    session = { plan, index: 0, startedAt: Date.now() };
+    location.hash = `#/lesson/${plan[0].id}`;
+  };
+}
+
+function sessionSummary() {
+  const s = session;
+  session = null;
+  const done = s ? s.plan.filter((x) => x.done) : [];
+  if (!done.length) return location.replace('#/');
+  const mins = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000));
+  main.innerHTML = `
+    <h1 class="page-title">تمرین امروز تموم شد 🎉</h1>
+    <section class="stats">
+      <div class="stat"><b>${fa(done.length)}</b><span>قدم از ${fa(s.plan.length)}</span></div>
+      <div class="stat"><b>${fa(mins)}</b><span>دقیقه</span></div>
+      <div class="stat"><b>${fa(streak())}</b><span>روز پشت‌سرهم</span></div>
+    </section>
+    <div class="card">
+      <ul class="note-scores">
+        ${s.plan.map((x) => {
+          const L = lessonById(x.id);
+          const result = !x.done ? '<span class="muted">رد شد</span>'
+            : x.score != null ? `<span class="${x.score >= PASS ? 'good' : ''}">${fa(x.score)}٪</span>` : '<span class="good">✓</span>';
+          return `<li><span>${L.icon} ${esc(L.title)}</span>${result}</li>`;
+        }).join('')}
+      </ul>
+    </div>
+    <a class="btn primary block" href="#/">خانه</a>`;
 }
 
 function viewLesson(id) {
@@ -422,7 +528,7 @@ function runWarmup(L) {
     keepAwake(false);
     finishSession(L.id, null);
     $('#cd').textContent = 'صدات آماده‌ست ✓';
-    main.insertAdjacentHTML('beforeend', `<a class="btn primary block" href="#/lesson/${suggestNext(store.get()).id}">برو سراغ تمرین بعدی</a>`);
+    main.insertAdjacentHTML('beforeend', nextLink(L, 'block', `#/lesson/${suggestNext(store.get()).id}`, 'برو سراغ تمرین بعدی'));
   };
 }
 
@@ -523,7 +629,7 @@ function runRange(L) {
         <p>تیپ صدای تخمینی: <b>${esc(vt.fa)}</b></p>
         <p class="muted small">این فقط یه تخمینه. محدوده‌ی صدای مبتدی‌ها با تمرین بیشتر می‌شه، پس هر چند وقت یه بار دوباره تست کن.</p>
       </div>
-      <a class="btn primary block" href="#/lesson/home">بعدی: پیدا کردن نت خانه</a>`;
+      ${nextLink(L, 'block', '#/lesson/home', 'بعدی: پیدا کردن نت خانه')}`;
   };
 }
 
@@ -585,7 +691,7 @@ function runHome(L) {
           <h2>${esc(stepName(home).fa)} <span class="muted small">${stepName(home).latin}</span></h2>
           <p>ثبات صدا: <b>${fa(score)}٪</b></p>
         </div>
-        <a class="btn primary block" href="#/lesson/match">بعدی: هم‌صدا شدن با نت</a>`;
+        ${nextLink(L, 'block', '#/lesson/match', 'بعدی: هم‌صدا شدن با نت')}`;
     };
     timeout = setTimeout(() => finish(false), 15000);
     off = input.on((ev) => {
@@ -754,7 +860,7 @@ function runSeq(L) {
       </div>
       <div class="row">
         <button class="btn grow" id="retry">دوباره</button>
-        <a class="btn primary grow" href="#/">خانه</a>
+        ${nextLink(L, 'grow', '#/', 'خانه')}
       </div>`;
     $('#retry').onclick = () => route();
   };
@@ -829,7 +935,7 @@ function runSustain(L) {
           ${before && r.secs > before ? '<p class="good">رکورد جدید 🎉</p>' : ''}
           <p class="muted small">نفس عمیق از شکم و رها بودن شونه‌ها کمک می‌کنه نت رو طولانی‌تر و یکنواخت‌تر نگه داری. هیچ‌وقت تا آخرین ذره‌ی نفست نرو.</p>
         </div>
-        <a class="btn primary block" href="#/">خانه</a>`;
+        ${nextLink(L, 'block', '#/', 'خانه')}`;
     };
     timeout = setTimeout(() => { if (!tracker.started) finish(); }, 15000);
     off = input.on((ev) => {
@@ -927,7 +1033,7 @@ function runEar(L) {
       </div>
       <div class="row">
         <button class="btn grow" id="retry">دوباره</button>
-        <a class="btn primary grow" href="#/">خانه</a>
+        ${nextLink(L, 'grow', '#/', 'خانه')}
       </div>`;
     $('#retry').onclick = () => route();
   };
