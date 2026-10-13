@@ -7,3 +7,7 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 deploy
+tests
+package.json
+ROADMAP.md
+.github

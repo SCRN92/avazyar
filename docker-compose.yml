@@ -1,7 +1,7 @@
 services:
   avazyar:
     build: .
-    image: avazyar:0.1
+    image: avazyar:0.2
     container_name: avazyar
     restart: unless-stopped
     ports:

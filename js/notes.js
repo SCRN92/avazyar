@@ -59,3 +59,22 @@ export function estimateVoiceType(low, high, voice) {
   }
   return best;
 }
+
+// نتی از کلاس «pc» پیدا کن که بازه‌ی [0, width] بالای آن بیشترین جا را در محدوده‌ی صدا داشته باشد
+export function fitRoot(pc, width, low, high) {
+  let best = null;
+  for (let r = pc + 24; r <= 96; r += 12) {
+    const over = Math.max(0, low - r) + Math.max(0, r + width - high);
+    if (!best || over < best.over) best = { r, over };
+  }
+  return best.r;
+}
+
+// اگر کاربر یک اکتاو بالاتر یا پایین‌تر بخواند، به اکتاو هدف برمی‌گردانیم
+export function fold(m, target) {
+  if (target == null) return m;
+  let d = m - target;
+  while (d >= 9) d -= 12;
+  while (d <= -9) d += 12;
+  return target + d;
+}

@@ -6,20 +6,24 @@
   <title>آوازیار</title>
   <meta name="description" content="آموزش آواز ایرانی از صفر">
   <meta name="theme-color" content="#0f766e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="آوازیار">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vazirmatn@33.0.3/Vazirmatn-font-face.css">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <main id="main" class="wrap"></main>
+  <main id="main" class="wrap" tabindex="-1"></main>
   <nav class="tabbar" aria-label="منوی اصلی">
-    <a href="#/" data-route=""><span class="ti">🏠</span>خانه</a>
-    <a href="#/tuner" data-route="tuner"><span class="ti">🎤</span>تمرین آزاد</a>
-    <a href="#/progress" data-route="progress"><span class="ti">📈</span>پیشرفت</a>
-    <a href="#/settings" data-route="settings"><span class="ti">⚙️</span>تنظیمات</a>
+    <a href="#/" data-route=""><span class="ti" aria-hidden="true">🏠</span>خانه</a>
+    <a href="#/tuner" data-route="tuner"><span class="ti" aria-hidden="true">🎤</span>تمرین آزاد</a>
+    <a href="#/progress" data-route="progress"><span class="ti" aria-hidden="true">📈</span>پیشرفت</a>
+    <a href="#/settings" data-route="settings"><span class="ti" aria-hidden="true">⚙️</span>تنظیمات</a>
   </nav>
+  <div id="sr" class="visually-hidden" aria-live="polite"></div>
+  <script src="js/version.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

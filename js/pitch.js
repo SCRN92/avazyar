@@ -1,12 +1,30 @@
 import { freqToMidi } from './notes.js';
 
+// آستانه‌ی بلندی صدا: پایین‌تر از این، سکوت حساب می‌شود
+export const DEFAULT_GATE = 0.008;
+const MIN_GATE = 0.003;
+const MAX_GATE = 0.05;
+
+// آستانه را از روی سر و صدای محیط تنظیم می‌کند (تست میکروفون)
+export const gateFor = (noise) => Math.min(MAX_GATE, Math.max(MIN_GATE, noise * 3));
+
+// نتیجه‌ی تست میکروفون: noise و level بلندی (RMS) محیط و صدای کاربر هستند
+export function micVerdict({ noise, level, peak, voiced }) {
+  if (voiced < 15) return 'silent';
+  if (peak > 0.4) return 'loud';
+  if (noise >= 0.03) return 'noisy';
+  if (level < Math.max(noise * 5, 0.012)) return 'weak';
+  return 'ok';
+}
+
 // تشخیص زیر و بمی با الگوریتم YIN
 export class Yin {
-  constructor(sampleRate, { minFreq = 65, maxFreq = 1100, threshold = 0.12 } = {}) {
+  constructor(sampleRate, { minFreq = 60, maxFreq = 1100, threshold = 0.12, gate = DEFAULT_GATE } = {}) {
     this.sr = sampleRate;
     this.tauMin = Math.floor(sampleRate / maxFreq);
     this.tauMax = Math.ceil(sampleRate / minFreq);
     this.threshold = threshold;
+    this.gate = gate;
     this.d = new Float32Array(this.tauMax + 2);
   }
 
@@ -15,7 +33,7 @@ export class Yin {
     let rms = 0;
     for (let i = 0; i < n; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / n);
-    if (rms < 0.008) return { freq: 0, clarity: 0, rms };
+    if (rms < this.gate) return { freq: 0, clarity: 0, rms };
 
     const tauMax = Math.min(this.tauMax, Math.floor(n / 2));
     const W = n - tauMax;
@@ -64,6 +82,12 @@ export class PitchInput {
     this.listeners = new Set();
     this.running = false;
     this.hist = [];
+    this.gate = DEFAULT_GATE;
+  }
+
+  setGate(gate) {
+    this.gate = gate;
+    if (this.yin) this.yin.gate = gate;
   }
 
   async start() {
@@ -82,6 +106,7 @@ export class PitchInput {
       window.__sim = {
         setFreq: (f) => osc.frequency.setValueAtTime(f, this.ctx.currentTime),
         mute: (on) => { g.gain.value = on ? 0 : 0.3; },
+        setGain: (v) => { g.gain.value = v; },
       };
     } else {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -98,7 +123,7 @@ export class PitchInput {
     this.analyser.fftSize = 2048;
     this.source.connect(this.analyser);
     this.buf = new Float32Array(this.analyser.fftSize);
-    this.yin = new Yin(this.ctx.sampleRate);
+    this.yin = new Yin(this.ctx.sampleRate, { gate: this.gate });
     this.running = true;
     this.frame = 0;
     this.hist = [];

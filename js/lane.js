@@ -99,7 +99,7 @@ export class Lane {
       const crowded = h / this.span < 16;
       const label = s === this.target || (!quarter && !(crowded && stepName(s).fa.includes('دیز')));
       if (label) {
-        g.fillStyle = col(s === this.target ? '--accent' : '--muted');
+        g.fillStyle = col(s === this.target ? '--accent-ink' : '--muted');
         g.fillText(stepName(s).fa, 4, y);
       }
     }
@@ -143,10 +143,14 @@ export class Lane {
     }
     const last = this.pts[this.pts.length - 1];
     if (last && last.m != null && now - last.t < 200) {
-      g.fillStyle = col(ok(last.m) ? '--good' : '--warn');
+      // روی نت: دایره‌ی توپر؛ خارج از نت: دایره‌ی توخالی (تا فقط به رنگ وابسته نباشد)
+      const on = ok(last.m);
+      g.fillStyle = col(on ? '--good' : '--surface');
+      g.strokeStyle = col(on ? '--good' : '--warn');
       g.beginPath();
-      g.arc(x(last.t), clampY(this.y(last.m)), 7, 0, Math.PI * 2);
+      g.arc(x(last.t), clampY(this.y(last.m)), on ? 7 : 6, 0, Math.PI * 2);
       g.fill();
+      if (!on) g.stroke();
     }
   }
 }

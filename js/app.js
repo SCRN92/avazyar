@@ -1,8 +1,10 @@
-import { PitchInput } from './pitch.js';
+import { PitchInput, DEFAULT_GATE, gateFor, micVerdict } from './pitch.js';
 import { playTone } from './synth.js';
-import { fa, nearest, stepName, midiToFreq, estimateVoiceType } from './notes.js';
-import { store, recordSession, streak } from './store.js';
+import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fitRoot, fold } from './notes.js';
+import { store, recordSession, setRange, streak, exportData, importData } from './store.js';
 import { Lane } from './lane.js';
+
+const VERSION = globalThis.AVAZYAR_VERSION;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const main = $('#main');
@@ -13,6 +15,54 @@ let actx = null;
 let input = null;
 let cleanup = null;
 let deferredInstall = null;
+
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// ---------- بیدار نگه داشتن صفحه حین تمرین ----------
+
+let wake = null;
+let wakeWanted = false;
+let wakeBusy = false;
+
+async function keepAwake(on) {
+  wakeWanted = on;
+  if (!on) {
+    wake?.release().catch(() => {});
+    wake = null;
+    return;
+  }
+  if (wake || wakeBusy || !('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+  wakeBusy = true;
+  try {
+    const w = await navigator.wakeLock.request('screen');
+    if (wakeWanted) {
+      wake = w;
+      w.addEventListener('release', () => { if (wake === w) wake = null; });
+    } else {
+      w.release().catch(() => {});
+    }
+  } catch {}
+  wakeBusy = false;
+}
+
+// مرورگر با رفتن برنامه به پس‌زمینه قفل را آزاد می‌کند؛ با برگشتن، دوباره می‌گیریمش
+document.addEventListener('visibilitychange', () => {
+  if (wakeWanted && document.visibilityState === 'visible') keepAwake(true);
+});
+
+// ---------- پیام برای صفحه‌خوان‌ها ----------
+
+const srBox = $('#sr');
+let lastSaid = 0;
+
+// بازخورد زنده خیلی سریع عوض می‌شود؛ حداکثر هر ۲٫۵ ثانیه یک بار اعلامش می‌کنیم
+function announce(text) {
+  const now = performance.now();
+  if (now - lastSaid < 2500) return;
+  lastSaid = now;
+  srBox.textContent = text;
+}
 
 // ---------- صدا و میکروفون ----------
 
@@ -25,12 +75,33 @@ function audio() {
 async function startMic() {
   const ctx = audio();
   if (!input) input = new PitchInput(ctx);
-  await input.start();
+  input.setGate(store.get().settings.micGate ?? DEFAULT_GATE);
+  const page = pageId;
+  let failed = null;
+  try {
+    await input.start();
+  } catch (e) {
+    failed = e;
+  }
+  // اگر کاربر وسط پرسش اجازه‌ی میکروفون به صفحه‌ی دیگری رفته، میکروفون را می‌بندیم و آن تمرین را ادامه نمی‌دهیم
+  if (page !== pageId) {
+    stopMic();
+    return new Promise(() => {});
+  }
+  if (failed) throw failed;
+  keepAwake(true);
   return input;
 }
 
 function stopMic() {
   input?.stop();
+  keepAwake(false);
+}
+
+// بعد از هر تمرین از مرورگر می‌خواهیم داده‌های برنامه را خودسرانه پاک نکند
+function finishSession(lessonId, score) {
+  recordSession(lessonId, score);
+  navigator.storage?.persist?.()?.catch(() => {});
 }
 
 function micError(e) {
@@ -43,7 +114,8 @@ function micError(e) {
   return map[e?.name] || `میکروفون در دسترس نیست (${e?.message || e}).`;
 }
 
-const alertBox = (msg) => `<div class="alert">${esc(msg)}</div>`;
+const alertBox = (msg, extra = '') => `<div class="alert" role="alert"><p>${esc(msg)}</p>${extra}</div>`;
+const micCheckLink = '<a class="btn small" href="#/mic">تست میکروفون</a>';
 
 // ---------- درس‌ها ----------
 
@@ -85,16 +157,6 @@ function voiceRange() {
   return { ...r, home };
 }
 
-// نتی از کلاس «pc» پیدا کن که بازه‌ی [0, width] بالای آن بیشترین جا را در محدوده‌ی صدا داشته باشد
-function fitRoot(pc, width, low, high) {
-  let best = null;
-  for (let r = pc + 24; r <= 96; r += 12) {
-    const over = Math.max(0, low - r) + Math.max(0, r + width - high);
-    if (!best || over < best.over) best = { r, over };
-  }
-  return best.r;
-}
-
 function buildSeq(id) {
   const { low, high, home } = voiceRange();
   const clamp = (m) => Math.min(high, Math.max(low, m));
@@ -126,10 +188,15 @@ const routes = {
   tuner: viewTuner,
   progress: viewProgress,
   settings: viewSettings,
+  mic: viewMic,
   lesson: viewLesson,
 };
 
+let routed = false;
+let pageId = 0;
+
 function route() {
+  pageId++;
   cleanup?.();
   cleanup = null;
   stopMic();
@@ -138,12 +205,22 @@ function route() {
     location.hash = '#/welcome';
     return;
   }
-  (routes[name] || viewHome)(arg);
+  try {
+    (routes[name] || viewHome)(arg);
+  } catch (e) {
+    showFatal(e);
+  }
   document.querySelectorAll('.tabbar a').forEach((a) => {
-    a.classList.toggle('active', a.dataset.route === (name || ''));
+    const active = a.dataset.route === (name || '');
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
   });
   document.body.classList.toggle('no-tabbar', name === 'welcome');
   window.scrollTo(0, 0);
+  // بعد از عوض شدن صفحه، صفحه‌خوان از ابتدای محتوای جدید ادامه می‌دهد
+  if (routed) main.focus({ preventScroll: true });
+  routed = true;
 }
 
 // ---------- صفحه‌ها ----------
@@ -155,11 +232,11 @@ function viewWelcome() {
       <h1>آوازیار</h1>
       <p class="lead">آموزش آواز ایرانی از صفر، حتی اگه هیچ سواد موسیقی نداری.</p>
       <div class="card">
-        <h3>روش ما: اول صدا، بعد نماد</h3>
+        <h2 class="h3">روش ما: اول صدا، بعد نماد</h2>
         <p>اول یاد می‌گیری صدای خودت رو بشناسی و نت‌ها رو درست بخونی. نت‌خوانی و نمادها بعداً میان، روی چیزهایی که از قبل بلدی.</p>
       </div>
       <div class="card">
-        <h3>صدات به کدوم نزدیک‌تره؟</h3>
+        <h2 class="h3">صدات به کدوم نزدیک‌تره؟</h2>
         <p class="muted">فقط برای انتخاب نت‌های اولیه‌ست. بعداً با تست محدوده، دقیق‌ترش می‌کنیم.</p>
         <div class="row">
           <button class="btn primary grow" data-voice="male">صدای مردانه</button>
@@ -180,6 +257,8 @@ function viewHome() {
   const s = store.get();
   const next = suggestNext();
   const rangeText = s.range ? `${stepName(s.range.low).fa} تا ${stepName(s.range.high).fa}` : '؟';
+  // آیفون پیشنهاد نصب خودکار ندارد؛ خودمان راهش را نشان می‌دهیم
+  const iosHint = isIOS && !isStandalone() && !s.settings.hideInstallHint;
   main.innerHTML = `
     <header class="hero">
       <div>
@@ -188,6 +267,11 @@ function viewHome() {
       </div>
       ${deferredInstall ? '<button class="btn small" id="install">نصب روی گوشی</button>' : ''}
     </header>
+    ${iosHint ? `<section class="card">
+      <h2 class="h3">نصب روی آیفون</h2>
+      <p class="muted small">در Safari دکمه‌ی «اشتراک‌گذاری» رو بزن و «Add to Home Screen» رو انتخاب کن. با نصب، پیشرفتت هم مطمئن‌تر روی گوشی می‌مونه.</p>
+      <button class="btn small" id="hidehint">باشه</button>
+    </section>` : ''}
     <section class="stats">
       <div class="stat"><b>${fa(streak())}</b><span>روز پشت‌سرهم</span></div>
       <div class="stat"><b>${fa(s.sessions.length)}</b><span>تمرین</span></div>
@@ -199,7 +283,7 @@ function viewHome() {
       <p class="muted">${esc(next.sub)}</p>
       <a class="btn primary block" href="#/lesson/${next.id}">شروع</a>
     </section>
-    <h3 class="section-title">درس‌ها</h3>
+    <h2 class="h3 section-title">درس‌ها</h2>
     <ol class="lessons">
       ${LESSONS.map((l, i) => {
         const r = s.lessons[l.id];
@@ -220,13 +304,17 @@ function viewHome() {
     deferredInstall = null;
     viewHome();
   });
+  $('#hidehint')?.addEventListener('click', () => {
+    store.update((st) => { st.settings.hideInstallHint = true; });
+    viewHome();
+  });
 }
 
 function viewTuner() {
   const mode = store.get().settings.mode;
   const lim = mode === 'irani' ? 25 : 50;
   main.innerHTML = `
-    <h2 class="page-title">تمرین آزاد</h2>
+    <h1 class="page-title">تمرین آزاد</h1>
     <p class="muted">هر نتی دوست داری بخون. آوازیار نشون می‌ده روی کدوم نتی و چقدر دقیق.</p>
     <div class="card center">
       <div class="note-big" id="nb">–</div>
@@ -237,7 +325,7 @@ function viewTuner() {
       </div>
       <div class="muted small" id="hz">&nbsp;</div>
     </div>
-    <canvas class="lane" id="lane"></canvas>
+    <canvas class="lane" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
     <div id="err"></div>
     <button class="btn primary block" id="go">روشن کردن میکروفون</button>`;
   const lane = new Lane($('#lane'), { span: 10, mode });
@@ -273,13 +361,14 @@ function viewTuner() {
       needle.classList.remove('idle');
       needle.classList.toggle('ok', Math.abs(n.cents) <= lim * 0.4);
       hz.textContent = `${fa(Math.round(midiToFreq(ev.midi)))} هرتز`;
+      announce(`${n.fa}، ${Math.abs(n.cents) <= lim * 0.4 ? 'درست' : n.cents > 0 ? 'کمی بالاتر' : 'کمی پایین‌تر'}`);
     });
   };
   cleanup = () => { off?.(); lane.stop(); };
 }
 
 function lessonHead(L) {
-  return `<a class="back" href="#/">→ بازگشت</a><h2 class="page-title">${L.icon} ${esc(L.title)}</h2>`;
+  return `<a class="back" href="#/">→ بازگشت</a><h1 class="page-title">${L.icon} ${esc(L.title)}</h1>`;
 }
 
 function viewLesson(id) {
@@ -306,7 +395,7 @@ function runWarmup(L) {
     <div class="card center"><div class="countdown" id="cd">۲ دقیقه</div></div>
     <button class="btn primary block" id="go">شروع</button>
     <div class="card tips">
-      <h3>سلامت صدا</h3>
+      <h2 class="h3">سلامت صدا</h2>
       <ul>
         <li>اگه گلوت درد گرفت یا خشک شد، دست نگه دار و آب بخور.</li>
         <li>هیچ‌وقت نت بلند رو با فشار و جیغ نخون. محدوده‌ی صدا با تمرین، خودش بیشتر می‌شه.</li>
@@ -318,6 +407,7 @@ function runWarmup(L) {
   cleanup = () => { stopped = true; clearInterval(timer); };
   $('#go').onclick = async () => {
     $('#go').classList.add('hidden');
+    keepAwake(true);
     for (let i = 0; i < steps.length && !stopped; i++) {
       document.querySelectorAll('.steps li').forEach((li, j) => {
         li.classList.toggle('active', j === i);
@@ -335,7 +425,8 @@ function runWarmup(L) {
     }
     if (stopped) return;
     document.querySelectorAll('.steps li').forEach((li) => { li.classList.remove('active'); li.classList.add('done'); });
-    recordSession(L.id, null);
+    keepAwake(false);
+    finishSession(L.id, null);
     $('#cd').textContent = 'صدات آماده‌ست ✓';
     main.insertAdjacentHTML('beforeend', `<a class="btn primary block" href="#/lesson/${suggestNext().id}">برو سراغ تمرین بعدی</a>`);
   };
@@ -352,11 +443,11 @@ function runRange(L) {
     ${lessonHead(L)}
     <p class="muted">دو مرحله داره و هر مرحله ۸ ثانیه‌ست. با این تست، تمرین‌ها دقیقاً با صدای خودت تنظیم می‌شن.</p>
     <div class="card center">
-      <div class="status" id="ins">آماده‌ای؟</div>
+      <div class="status" id="ins" role="status">آماده‌ای؟</div>
       <div class="note-big" id="nb">–</div>
       <div class="countdown" id="cd">&nbsp;</div>
     </div>
-    <canvas class="lane short" id="lane"></canvas>
+    <canvas class="lane short" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
     <div id="err"></div>
     <div id="result"></div>
     <button class="btn primary block" id="go">شروع تست</button>`;
@@ -386,7 +477,7 @@ function runRange(L) {
     off = input.on((ev) => {
       lane.push(ev.t, ev.midi);
       if (ev.midi != null) $('#nb').textContent = nearest(ev.midi, mode).fa;
-      if (collecting && ev.midi != null && ev.clarity > 0.9 && ev.rms > 0.01) collecting.push(ev.midi);
+      if (collecting && ev.midi != null && ev.clarity > 0.9 && ev.rms > input.gate * 1.25) collecting.push(ev.midi);
     });
     const res = {};
     for (const ph of phases) {
@@ -404,7 +495,7 @@ function runRange(L) {
       const got = collecting;
       collecting = null;
       if (got.length < 20) {
-        $('#result').innerHTML = alertBox('صدای کافی نشنیدم. کمی بلندتر یا نزدیک‌تر به گوشی بخون و دوباره امتحان کن.');
+        $('#result').innerHTML = alertBox('صدای کافی نشنیدم. کمی بلندتر یا نزدیک‌تر به گوشی بخون و دوباره امتحان کن. اگه باز هم نشد، تست میکروفون رو انجام بده.', micCheckLink);
         $('#cd').textContent = '';
         go.textContent = 'دوباره';
         go.classList.remove('hidden');
@@ -426,8 +517,8 @@ function runRange(L) {
       go.classList.remove('hidden');
       return;
     }
-    store.update((s) => { s.range = { low, high, date: Date.now() }; });
-    recordSession(L.id, null);
+    setRange(low, high);
+    finishSession(L.id, null);
     const vt = estimateVoiceType(low, high, store.get().settings.voice);
     const span = high - low;
     $('#result').innerHTML = `
@@ -449,11 +540,11 @@ function runHome(L) {
     ${lessonHead(L)}
     <p class="muted">یه نت راحت و طبیعی رو، مثل وقتی که «اوم» می‌گی، با «آ» بخون و ۳ ثانیه ثابت نگهش دار. این نت خانه‌ی صدای توئه و تمرین‌ها از اینجا شروع می‌شن.</p>
     <div class="card center">
-      <div class="status" id="ins">آماده‌ای؟</div>
+      <div class="status" id="ins" role="status">آماده‌ای؟</div>
       <div class="note-big" id="nb">–</div>
       <div class="meter" dir="ltr"><div class="meter-track"><div class="hold" id="hold"></div></div></div>
     </div>
-    <canvas class="lane short" id="lane"></canvas>
+    <canvas class="lane short" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
     <div id="err"></div>
     <div id="result"></div>
     <button class="btn primary block" id="go">شروع</button>`;
@@ -492,7 +583,7 @@ function runHome(L) {
       const home = Math.round(med);
       const score = Math.max(0, Math.min(100, Math.round(100 - sd * 100 * 2)));
       store.update((s) => { s.home = home; });
-      recordSession(L.id, score);
+      finishSession(L.id, score);
       $('#ins').textContent = 'پیدا شد ✓';
       $('#result').innerHTML = `
         <div class="card result">
@@ -527,15 +618,6 @@ function runHome(L) {
   };
 }
 
-// اگر کاربر یک اکتاو بالاتر یا پایین‌تر بخواند، به اکتاو هدف برمی‌گردانیم
-function fold(m, target) {
-  if (target == null) return m;
-  let d = m - target;
-  while (d >= 9) d -= 12;
-  while (d <= -9) d += 12;
-  return target + d;
-}
-
 // درس‌های «بشنو و تکرار کن»
 function runSeq(L) {
   const mode = store.get().settings.mode;
@@ -548,9 +630,9 @@ function runSeq(L) {
       <div class="muted small" id="prog">${fa(targets.length)} نت</div>
       <div class="note-big" id="tn">${esc(stepName(targets[0]).fa)}</div>
       <div class="latin" id="tl">${stepName(targets[0]).latin}</div>
-      <div class="status" id="st">آماده‌ای؟ بهتره با هدفون تمرین کنی.</div>
+      <div class="status" id="st" role="status">آماده‌ای؟ بهتره با هدفون تمرین کنی.</div>
     </div>
-    <canvas class="lane" id="lane"></canvas>
+    <canvas class="lane" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
     <div class="live" id="live">&nbsp;</div>
     <div id="err"></div>
     <button class="btn primary block" id="go">شروع</button>
@@ -615,6 +697,7 @@ function runSeq(L) {
           if (inTol) cur.inTolMs += dt;
         }
         live.innerHTML = `تو: <b>${esc(nearest(m, mode).fa)}</b> · ${inTol ? '<span class="good">روی نتی ✓</span>' : diff > 0 ? '<span class="warn">کمی بالاتری ↓</span>' : '<span class="warn">کمی پایین‌تری ↑</span>'}`;
+        announce(inTol ? 'روی نتی' : diff > 0 ? 'کمی بالاتری' : 'کمی پایین‌تری');
         if (cur.inTolMs >= 1500) finishNote();
       }
       if (now - cur.singStart > 8000) finishNote();
@@ -645,7 +728,7 @@ function runSeq(L) {
     off = null;
     stopMic();
     const total = Math.round(scores.reduce((a, b) => a + b.sc, 0) / scores.length);
-    recordSession(L.id, total);
+    finishSession(L.id, total);
     $('#ctl').classList.add('hidden');
     st.textContent = 'تموم شد ✓';
     const best = store.get().lessons[L.id].best;
@@ -677,14 +760,14 @@ function viewProgress() {
     return `<rect x="${i * bw + 2}" y="${H - h}" width="${Math.max(2, bw - 4)}" height="${h}" rx="3" class="${x.score >= 80 ? 'bar-good' : 'bar'}"><title>${esc(lessonTitle(x.lesson))}: ${fa(x.score)}٪</title></rect>`;
   }).join('');
   main.innerHTML = `
-    <h2 class="page-title">پیشرفت من</h2>
+    <h1 class="page-title">پیشرفت من</h1>
     <section class="stats">
       <div class="stat"><b>${fa(streak())}</b><span>روز پشت‌سرهم</span></div>
       <div class="stat"><b>${fa(s.days.length)}</b><span>روز تمرین</span></div>
       <div class="stat"><b>${fa(s.sessions.length)}</b><span>تمرین</span></div>
     </section>
     <div class="card">
-      <h3>صدای من</h3>
+      <h2 class="h3">صدای من</h2>
       ${s.range
         ? `<p>محدوده: <b>${esc(stepName(s.range.low).fa)}</b> تا <b>${esc(stepName(s.range.high).fa)}</b> (${fa(s.range.high - s.range.low)} نیم‌پرده)</p>
            <p>تیپ صدای تخمینی: <b>${esc(vt.fa)}</b></p>`
@@ -692,14 +775,14 @@ function viewProgress() {
       ${s.home != null ? `<p>نت خانه: <b>${esc(stepName(s.home).fa)}</b></p>` : ''}
     </div>
     <div class="card">
-      <h3>امتیاز ۲۰ تمرین آخر</h3>
+      <h2 class="h3">امتیاز ۲۰ تمرین آخر</h2>
       ${scored.length
         ? `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="نمودار امتیاز تمرین‌ها"><line x1="0" x2="${W}" y1="${H - (0.8 * (H - 20))}" y2="${H - (0.8 * (H - 20))}" class="goal"/>${bars}</svg>
            <p class="muted small">خط‌چین: امتیاز ۸۰٪</p>`
         : '<p class="muted">بعد از اولین تمرین، نمودارت اینجا نشون داده می‌شه.</p>'}
     </div>
     <div class="card">
-      <h3>درس‌ها</h3>
+      <h2 class="h3">درس‌ها</h2>
       <ul class="note-scores">
         ${LESSONS.map((l) => {
           const r = s.lessons[l.id];
@@ -712,25 +795,39 @@ function viewProgress() {
 function viewSettings() {
   const s = store.get().settings;
   main.innerHTML = `
-    <h2 class="page-title">تنظیمات</h2>
+    <h1 class="page-title">تنظیمات</h1>
     <div class="card">
-      <h3>نمایش نت‌ها</h3>
+      <h2 class="h3">نمایش نت‌ها</h2>
       <label class="opt"><input type="radio" name="mode" value="irani" ${s.mode === 'irani' ? 'checked' : ''}> ایرانی: با ربع‌پرده‌ها (کرن و سری)</label>
       <label class="opt"><input type="radio" name="mode" value="gharbi" ${s.mode === 'gharbi' ? 'checked' : ''}> غربی: فقط نیم‌پرده‌ها</label>
     </div>
     <div class="card">
-      <h3>صدا</h3>
+      <h2 class="h3">صدا</h2>
       <label class="opt"><input type="radio" name="voice" value="male" ${s.voice === 'male' ? 'checked' : ''}> مردانه</label>
       <label class="opt"><input type="radio" name="voice" value="female" ${s.voice === 'female' ? 'checked' : ''}> زنانه</label>
     </div>
     <div class="card">
-      <h3>داده‌ها</h3>
-      <p class="muted small">همه‌ی پیشرفتت فقط روی همین دستگاه ذخیره شده.</p>
+      <h2 class="h3">میکروفون</h2>
+      <p class="muted small">${s.micGate != null
+        ? 'حساسیت میکروفون با محیط تو تنظیم شده. اگه جای تمرینت عوض شد، دوباره تست کن.'
+        : 'اگه آوازیار صدات رو خوب نمی‌شنوه، این تست حساسیت میکروفون رو با محیطت تنظیم می‌کنه.'}</p>
+      <a class="btn" href="#/mic">تست میکروفون</a>
+    </div>
+    <div class="card">
+      <h2 class="h3">داده‌ها</h2>
+      <p class="muted small">همه‌ی پیشرفتت فقط روی همین دستگاه ذخیره شده. اگه داده‌های مرورگر پاک بشه، پیشرفتت هم پاک می‌شه؛ پس هر از گاهی یه فایل پشتیبان بگیر.</p>
+      <p class="muted small" id="persist"></p>
+      <div class="row">
+        <button class="btn grow" id="export">گرفتن پشتیبان</button>
+        <button class="btn grow" id="import">بازگردانی پشتیبان</button>
+      </div>
+      <input type="file" id="file" accept="application/json,.json" class="hidden">
+      <div id="datamsg"></div>
       <button class="btn danger" id="reset">پاک کردن همه‌ی داده‌ها</button>
     </div>
     <div class="card">
-      <h3>درباره‌ی آوازیار</h3>
-      <p class="muted small">نسخه‌ی ۰.۱ · نام نت‌ها به روش ایرانی: «دو» همون C است. آوازیار جایگزین استاد آواز نیست. برای تکنیک درست و سلامت صدا، هر از گاهی از یه استاد بازخورد بگیر.</p>
+      <h2 class="h3">درباره‌ی آوازیار</h2>
+      <p class="muted small">نسخه‌ی ${fa(VERSION)} · نام نت‌ها به روش ایرانی: «دو» همون C است. آوازیار جایگزین استاد آواز نیست. برای تکنیک درست و سلامت صدا، هر از گاهی از یه استاد بازخورد بگیر.</p>
     </div>`;
   main.querySelectorAll('input[name=mode]').forEach((r) => {
     r.onchange = () => store.update((st) => { st.settings.mode = r.value; });
@@ -738,12 +835,179 @@ function viewSettings() {
   main.querySelectorAll('input[name=voice]').forEach((r) => {
     r.onchange = () => store.update((st) => { st.settings.voice = r.value; });
   });
+  navigator.storage?.persisted?.().then((ok) => {
+    const el = $('#persist');
+    if (el) el.textContent = ok
+      ? 'مرورگر این داده‌ها رو ماندگار نگه می‌داره.'
+      : 'مرورگر ممکنه بعد از مدتی استفاده نکردن، این داده‌ها رو پاک کنه. نصب برنامه روی گوشی جلوی این رو می‌گیره.';
+  }).catch(() => {});
+
+  $('#export').onclick = async () => {
+    const name = `avazyar-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const file = new File([exportData()], name, { type: 'application/json' });
+    // روی آیفون برگه‌ی اشتراک‌گذاری مطمئن‌تر از دانلود مستقیم است
+    if (isIOS && navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); } catch {}
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    $('#datamsg').innerHTML = `<p class="muted small">فایل پشتیبان ذخیره شد: <span dir="ltr">${esc(name)}</span></p>`;
+  };
+  $('#import').onclick = () => $('#file').click();
+  $('#file').onchange = async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!confirm('پیشرفت فعلی با محتوای این فایل جایگزین بشه؟')) return;
+    try {
+      if (f.size > 2_000_000) throw new Error('invalid');
+      importData(await f.text());
+    } catch (err) {
+      $('#datamsg').innerHTML = alertBox(err.message === 'newer'
+        ? 'این فایل با نسخه‌ی جدیدتری از آوازیار ساخته شده. اول برنامه رو به‌روز کن.'
+        : 'این فایل، پشتیبان آوازیار نیست یا خراب شده. چیزی عوض نشد.');
+      return;
+    }
+    viewSettings();
+    $('#datamsg').innerHTML = '<p class="good small" role="status">پشتیبان بازگردانی شد ✓</p>';
+  };
   $('#reset').onclick = () => {
     if (confirm('همه‌ی پیشرفت و تنظیمات پاک بشه؟ این کار برگشت‌پذیر نیست.')) {
       store.reset();
       location.hash = '#/welcome';
     }
   };
+}
+
+// تست میکروفون: سر و صدای محیط و بلندی صدای کاربر را می‌سنجد و حساسیت را با آن تنظیم می‌کند
+function viewMic() {
+  const MESSAGES = {
+    ok: 'میکروفون خوب کار می‌کنه ✓ حساسیتش با محیط تو تنظیم شد.',
+    silent: 'صدات رو نشنیدم. مطمئن شو میکروفون درست انتخاب شده، کمی نزدیک‌تر شو و دوباره امتحان کن.',
+    weak: 'صدات نسبت به سر و صدای محیط ضعیفه. گوشی رو نزدیک‌تر بگیر (حدود یه وجب) یا کمی بلندتر بخون.',
+    noisy: 'محیط پر سر و صداست. اگه می‌تونی جای ساکت‌تری تمرین کن یا از هدست میکروفون‌دار استفاده کن.',
+    loud: 'صدا خیلی بلند به میکروفون می‌رسه و ممکنه خراب ثبت بشه. کمی از گوشی فاصله بگیر.',
+  };
+  main.innerHTML = `
+    <a class="back" href="#/settings">→ بازگشت</a>
+    <h1 class="page-title">تست میکروفون</h1>
+    <p class="muted">دو مرحله‌ی کوتاه داره: اول چند ثانیه ساکت بمون تا سر و صدای محیط اندازه گرفته بشه، بعد یه «آ»ی معمولی بکش.</p>
+    <div class="card center">
+      <div class="status" id="ins" role="status">آماده‌ای؟</div>
+      <div class="level" dir="ltr" aria-hidden="true"><div class="level-fill" id="lvl"></div></div>
+      <div class="countdown" id="cd">&nbsp;</div>
+    </div>
+    <div id="err"></div>
+    <div id="result"></div>
+    <button class="btn primary block" id="go">شروع تست</button>`;
+  let off = null;
+  let stopped = false;
+  cleanup = () => { stopped = true; off?.(); };
+  const pct = (arr, p) => {
+    const s = [...arr].sort((a, b) => a - b);
+    return s.length ? s[Math.floor(p * (s.length - 1))] : 0;
+  };
+
+  $('#go').onclick = async () => {
+    const go = $('#go');
+    go.classList.add('hidden');
+    $('#result').innerHTML = '';
+    try {
+      await startMic();
+    } catch (e) {
+      $('#err').innerHTML = alertBox(micError(e));
+      go.classList.remove('hidden');
+      return;
+    }
+    $('#err').innerHTML = '';
+    input.setGate(gateFor(0));
+    let frames = [];
+    off = input.on((ev) => {
+      frames.push(ev);
+      const db = 20 * Math.log10(Math.max(ev.rms, 1e-4));
+      $('#lvl').style.width = `${Math.max(0, Math.min(100, ((db + 60) / 60) * 100))}%`;
+    });
+    const phase = async (text, secs) => {
+      $('#ins').textContent = text;
+      await sleep(600); // صدای لمس دکمه را حساب نکن
+      frames = [];
+      for (let i = secs; i > 0 && !stopped; i--) {
+        $('#cd').textContent = fa(i);
+        await sleep(1000);
+      }
+      return frames;
+    };
+    const quiet = await phase('ساکت بمون… 🤫', 3);
+    if (stopped) return;
+    const noise = pct(quiet.map((f) => f.rms), 0.9);
+    const gate = gateFor(noise);
+    input.setGate(gate);
+    const sung = await phase('حالا یه «آ» بکش و نگهش دار 🎤', 4);
+    if (stopped) return;
+    off();
+    off = null;
+    stopMic();
+    const voiced = sung.filter((f) => f.midi != null);
+    const verdict = micVerdict({
+      noise,
+      level: pct(voiced.map((f) => f.rms), 0.5),
+      peak: pct(sung.map((f) => f.rms), 0.95),
+      voiced: voiced.length,
+    });
+    if (verdict !== 'silent') store.update((s) => { s.settings.micGate = gate; });
+    $('#cd').textContent = '';
+    $('#lvl').style.width = '0%';
+    $('#ins').textContent = 'تموم شد';
+    $('#result').innerHTML = `
+      <div class="card result">
+        <p class="eyebrow">نتیجه</p>
+        <p class="${verdict === 'ok' ? 'good' : ''}">${esc(MESSAGES[verdict])}</p>
+      </div>
+      ${verdict === 'ok' ? '<a class="btn primary block" href="#/">برگشت به تمرین</a>' : ''}`;
+    go.textContent = 'دوباره';
+    go.classList.toggle('primary', verdict !== 'ok');
+    go.classList.remove('hidden');
+  };
+}
+
+// ---------- خطاها و به‌روزرسانی ----------
+
+function showFatal(err) {
+  console.error(err);
+  stopMic();
+  if ($('#fatal')) return;
+  main.insertAdjacentHTML('afterbegin', `
+    <div class="alert" id="fatal" role="alert">
+      <p>یه مشکل غیرمنتظره پیش اومد. اگه برنامه درست کار نمی‌کنه، صفحه رو دوباره بارگذاری کن. پیشرفتت سر جاشه.</p>
+      <button class="btn small" id="reload">بارگذاری دوباره</button>
+    </div>`);
+  $('#reload').onclick = () => location.reload();
+}
+
+window.addEventListener('error', (e) => showFatal(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => showFatal(e.reason));
+
+function toast(text, label, action) {
+  $('.toast')?.remove();
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<span>${esc(text)}</span><button class="btn small">${esc(label)}</button>`;
+  el.querySelector('button').onclick = action;
+  document.body.append(el);
+}
+
+// اگر نسخه‌ی روی سرور با نسخه‌ی در حال اجرا فرق داشت، پیشنهاد تازه‌سازی می‌دهیم (وسط تمرین چیزی را قطع نمی‌کنیم)
+async function checkVersion() {
+  try {
+    const text = await (await fetch('js/version.js', { cache: 'no-store' })).text();
+    const latest = text.match(/AVAZYAR_VERSION\s*=\s*'([^']+)'/)?.[1];
+    if (latest && latest !== VERSION) toast(`نسخه‌ی ${fa(latest)} آماده‌ست.`, 'تازه‌سازی', () => location.reload());
+  } catch {}
 }
 
 // ---------- راه‌اندازی ----------
@@ -755,6 +1019,16 @@ window.addEventListener('beforeinstallprompt', (e) => {
   if (!location.hash || location.hash === '#/') viewHome();
 });
 if ('serviceWorker' in navigator && !new URLSearchParams(location.search).has('sim')) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const sw = navigator.serviceWorker;
+  sw.register('sw.js').catch(() => {});
+  sw.addEventListener('controllerchange', checkVersion);
+  // برنامه‌ی نصب‌شده ممکن است روزها باز بماند؛ هر بار که جلو می‌آید دنبال نسخه‌ی جدید می‌گردیم
+  let lastCheck = performance.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || performance.now() - lastCheck < 300_000) return;
+    lastCheck = performance.now();
+    checkVersion();
+    sw.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
 }
 route();
