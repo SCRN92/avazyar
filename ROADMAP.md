@@ -1,29 +1,23 @@
 # Avazyar roadmap
 
 > **Status:** draft proposal, 13 October 2026. Not yet agreed with the repository owner.
-> **Progress:** v0.1.1 and v0.2 are live, except the items marked open below. The v0.3 items marked done are on the `v0.3` branch and not yet deployed. Nothing is merged into `main` yet.
+> **Progress:** v0.1.1, v0.2 and the v0.3 items marked done are live. Items marked open are not started. Nothing is merged into `main` yet; the work sits in pull requests.
 > **Sizes** are rough guesses for one developer: **S** = up to half a day, **M** = 1–3 days, **L** = a week or more.
 > Milestones are ordered by dependency, not by date. No dates are promised.
 
 ## 1. Where we are
 
-Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.2. It is a small installable web app with no server-side logic. v0.3 is built on its own branch and not yet deployed.
+Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.3. It is a small installable web app with no server-side logic.
 
-**What it does today (v0.2, live)**
+**What it does today**
 
 - Detects sung pitch in real time on the device, including quarter-tones (koron and sori).
-- Six lessons: warm-up, range test, home note, match a note, do-re-mi, and a first quarter-tone exercise in Shur.
-- A free tuner with a live pitch graph.
+- Nine lessons: warm-up, range test, home note, breath and sustain, match a note, do-re-mi, a first quarter-tone exercise in Shur, and two ear-training lessons that need no microphone.
+- Levels: lessons get stricter as scores improve, and missed notes are offered again.
+- A free tuner with a live pitch graph and a drone note for interval practice.
 - A microphone check that adapts to room noise, and a screen that stays awake while practising.
 - Scores, a daily streak and a chart of the last 20 scores.
 - Works offline with nothing loaded from third parties. Progress is stored on the learner's device and can be backed up to a file.
-
-**Added in v0.3 (built, not yet live)**
-
-- Three more lessons: breath and sustain, and two ear-training lessons that need no microphone.
-- Levels: lessons get stricter as scores improve, and missed notes are offered again.
-- A drone note in the tuner for interval practice.
-- Lessons are defined as data, so adding one no longer means editing the app's logic.
 
 **The biggest gaps**
 
