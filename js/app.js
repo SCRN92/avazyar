@@ -1,11 +1,12 @@
 import { PitchInput, DEFAULT_GATE, gateFor, micVerdict } from './pitch.js';
-import { playTone, startDrone } from './synth.js';
+import { playTone, playPhrase, startDrone } from './synth.js';
 import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fold } from './notes.js';
 import { store, recordSession, setRange, setLevel, recordSustain, recordNotes, bestSustain, streak, exportData, importData } from './store.js';
-import { LESSONS, PASS, EAR_QUESTIONS, SESSION_LENGTHS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from './lessons.js';
+import { LESSONS, PASS, EAR_QUESTIONS, SESSION_LENGTHS, voiceRange, buildNotes, buildPhrases, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from './lessons.js';
 import { SustainTracker } from './exercise.js';
+import { PhraseTake, scorePhrase } from './phrase.js';
 import { weekSummary, lessonTrends, rangeGrowth, noteStats } from './stats.js';
-import { sparkline, rangeChart } from './charts.js';
+import { sparkline, rangeChart, phraseChart } from './charts.js';
 import { Lane } from './lane.js';
 
 const VERSION = globalThis.AVAZYAR_VERSION;
@@ -169,6 +170,45 @@ function finishScored(L, level, score) {
   }
   if (score >= PASS && level === levelCount(L) - 1) return '<p class="good">این درس رو خوب بلدی ✓</p>';
   return '';
+}
+
+// پخش مقایسه‌ای در صفحه‌ی نتیجه: اول نت‌های درست و بعد صدای ضبط‌شده‌ی خود کاربر. هر بار فقط یکی پخش می‌شود.
+function comparePlayer() {
+  let playing = null;
+  let stopped = false;
+  return {
+    async play(notes, clip, btn) {
+      if (playing || stopped) return;
+      playing = { stop() {} };
+      btn.setAttribute('aria-pressed', 'true');
+      try {
+        const ctx = audio();
+        const buffer = await ctx.decodeAudioData(await clip.arrayBuffer());
+        if (!stopped) {
+          playing = playPhrase(ctx, notes.map(midiToFreq), notes.length > 1 ? 0.65 : 0.8);
+          await playing.done;
+        }
+        if (!stopped) {
+          await new Promise((resolve) => {
+            const src = ctx.createBufferSource();
+            src.buffer = buffer;
+            src.connect(ctx.destination);
+            src.onended = resolve;
+            playing = { stop: () => { src.onended = null; src.stop(); resolve(); } };
+            src.start();
+          });
+        }
+      } catch {
+        btn.disabled = true; // این مرورگر نمی‌تواند ضبط خودش را پخش کند
+      }
+      playing = null;
+      btn.setAttribute('aria-pressed', 'false');
+    },
+    stop() {
+      stopped = true;
+      playing?.stop();
+    },
+  };
 }
 
 // ---------- مسیریابی ----------
@@ -487,7 +527,7 @@ function viewLesson(id) {
     location.hash = '#/';
     return;
   }
-  ({ warmup: runWarmup, range: runRange, home: runHome, seq: runSeq, sustain: runSustain, ear: runEar })[L.kind](L);
+  ({ warmup: runWarmup, range: runRange, home: runHome, seq: runSeq, phrase: runPhrase, sustain: runSustain, ear: runEar })[L.kind](L);
 }
 
 // گرم کردن
@@ -759,35 +799,10 @@ function runSeq(L) {
   let aborted = false;
   let off = null;
   let cur = null;
-  let playing = null; // صدایی که الان در صفحه‌ی نتیجه پخش می‌شود
-  cleanup = () => { aborted = true; off?.(); lane.stop(); playing?.stop(); };
+  const player = comparePlayer();
+  cleanup = () => { aborted = true; off?.(); lane.stop(); player.stop(); };
 
   const scoreOf = (c) => (c.countedMs > 0 ? Math.round((100 * c.inTolMs) / c.countedMs) : 0);
-  // اول نت درست و بعد صدای ضبط‌شده‌ی خود کاربر روی همان نت
-  const compare = async (x, btn) => {
-    if (playing) return;
-    playing = { stop() {} };
-    btn.setAttribute('aria-pressed', 'true');
-    try {
-      const ctx = audio();
-      const buffer = await ctx.decodeAudioData(await x.clip.arrayBuffer());
-      await playTone(ctx, midiToFreq(x.target), 0.8);
-      if (!aborted) {
-        await new Promise((resolve) => {
-          const src = ctx.createBufferSource();
-          src.buffer = buffer;
-          src.connect(ctx.destination);
-          src.onended = resolve;
-          playing = { stop: () => { src.onended = null; src.stop(); resolve(); } };
-          src.start();
-        });
-      }
-    } catch {
-      btn.disabled = true; // این مرورگر نمی‌تواند ضبط خودش را پخش کند
-    }
-    playing = null;
-    btn.setAttribute('aria-pressed', 'false');
-  };
   const finishNote = () => {
     if (!cur || cur.done) return;
     cur.done = true;
@@ -912,10 +927,203 @@ function runSeq(L) {
         ${nextLink(L, 'grow', '#/', 'خانه')}
       </div>`;
     $('#retry').onclick = () => route();
-    main.querySelectorAll('[data-clip]').forEach((b) => { b.onclick = () => compare(scores[b.dataset.clip], b); });
+    main.querySelectorAll('[data-clip]').forEach((b) => { b.onclick = () => player.play([scores[b.dataset.clip].target], scores[b.dataset.clip].clip, b); });
   };
   $('#again').onclick = () => { if (cur && !cur.done && cur.phase === 'sing') hear(); };
   $('#skip').onclick = () => finishNote();
+}
+
+// جمله‌ها: چند نت پشت‌سرهم با یک نفس. سرعت خواندن آزاد است.
+function runPhrase(L) {
+  const mode = store.get().settings.mode;
+  const level = lessonLevel(L);
+  const phrases = buildPhrases(L, voiceRange(store.get()));
+  const tolsOf = (notes) => notes.map((m) => tolFor(L, level, m));
+  // فلش قبل از هر نت می‌گوید از نت قبلی بالا می‌رویم یا پایین
+  const chips = (notes) => notes.map((m, i) => `<li${i ? ` data-dir="${m > notes[i - 1] ? 'up' : 'down'}"` : ''}><span class="chip">${esc(stepName(m).fa)}</span></li>`).join('');
+  main.innerHTML = `
+    ${lessonHead(L)}
+    <p class="muted">${esc(L.intro)}</p>
+    ${levelLine(L, ` · دقت لازم: ${fa(L.tols[level])} سنت`)}
+    <div class="card center">
+      <div class="muted small" id="prog">${fa(phrases.length)} جمله</div>
+      <ol class="phrase" id="ph" dir="ltr" aria-label="نت‌های جمله به ترتیب"></ol>
+      <div class="status" id="st" role="status">آماده‌ای؟ بهتره با هدفون تمرین کنی.</div>
+    </div>
+    <canvas class="lane" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
+    <div class="live" id="live">&nbsp;</div>
+    <div id="err"></div>
+    <button class="btn primary block" id="go">شروع</button>
+    <div class="row hidden" id="ctl">
+      <button class="btn grow" id="again">🔁 دوباره بشنو</button>
+      <button class="btn grow" id="skip">رد کن</button>
+    </div>
+    <div id="result"></div>`;
+  const lane = new Lane($('#lane'), { span: 8, mode });
+  const st = $('#st'), live = $('#live'), ph = $('#ph');
+  const show = (notes) => {
+    ph.innerHTML = chips(notes);
+    lane.span = Math.max(8, Math.max(...notes) - Math.min(...notes) + 4);
+    lane.setTargets(notes.map((m) => ({ m, tol: tolFor(L, level, m) })));
+  };
+  // on(i) می‌گوید نت i الان روشن باشد یا نه
+  const light = (on) => [...ph.children].forEach((li, i) => li.classList.toggle('on', on(i)));
+  show(phrases[0]);
+  lane.start();
+  const player = comparePlayer();
+  let aborted = false;
+  let off = null;
+  let cur = null;
+  let ref = null; // جمله‌ی مرجعی که الان پخش می‌شود
+  cleanup = () => { aborted = true; off?.(); lane.stop(); ref?.stop(); player.stop(); };
+
+  const finishPhrase = () => {
+    if (!cur || cur.done) return;
+    cur.done = true;
+    ref?.stop();
+    cur.resolve(scorePhrase(cur.take?.samples ?? [], cur.notes, cur.tols));
+  };
+  const hear = async () => {
+    const c = cur;
+    c.phase = 'listen';
+    c.take = null;
+    await input.stopRecording(); // اگر وسط خواندن «دوباره بشنو» زده شده، آن ضبط کنار می‌رود
+    if (aborted || c.done) return;
+    st.textContent = 'گوش کن… 👂';
+    st.className = 'status listen';
+    live.innerHTML = '&nbsp;';
+    ref = playPhrase(audio(), c.notes.map(midiToFreq), 0.65, (i) => light((j) => j === i));
+    await ref.done;
+    light(() => false);
+    if (aborted || c.done) return;
+    c.take = new PhraseTake({ start: performance.now() });
+    c.phase = 'sing';
+    input.startRecording();
+    st.textContent = 'حالا تو بخون، همه رو با یه نفس 🎤';
+    st.className = 'status sing';
+  };
+  // یک جمله را پخش می‌کند و نتیجه‌ی خواندن کاربر را برمی‌گرداند (اگر کاربر از صفحه رفته باشد: null)
+  const singPhrase = async (notes, label) => {
+    $('#prog').textContent = label;
+    show(notes);
+    const r = await new Promise((resolve) => {
+      cur = { notes, tols: tolsOf(notes), phase: 'listen', take: null, done: false, resolve };
+      hear();
+    });
+    const clip = await input.stopRecording();
+    if (aborted) return null;
+    live.innerHTML = '&nbsp;';
+    st.className = 'status';
+    st.textContent = !r.heard ? 'صدایی نشنیدم 🤔' : r.score >= 80 ? `عالی! ${fa(r.score)}٪ 🌟` : r.score >= 50 ? `خوب بود: ${fa(r.score)}٪` : `${fa(r.score)}٪. تمرین بیشتر، دقت بیشتر.`;
+    // نتیجه‌ی هر نت روی خود نت: ✓ یعنی درست، خط‌چین یعنی خوانده نشد
+    [...ph.children].forEach((li, i) => {
+      const x = r.notes[i];
+      li.className = !r.heard || x.missed ? 'miss' : x.score >= 80 ? 'hit' : 'off';
+      if (li.className === 'hit') li.firstElementChild.append(' ✓');
+    });
+    await sleep(r.heard ? 2000 : 1300);
+    return aborted ? null : { phrase: notes, ...r, clip: r.heard ? clip : null };
+  };
+
+  $('#go').onclick = async () => {
+    try {
+      await startMic();
+    } catch (e) {
+      $('#err').innerHTML = alertBox(micError(e));
+      return;
+    }
+    $('#err').innerHTML = '';
+    $('#go').classList.add('hidden');
+    $('#ctl').classList.remove('hidden');
+    off = input.on((ev) => {
+      const m = ev.midi == null ? null : fold(ev.midi, lane.center);
+      lane.push(ev.t, m);
+      if (!cur || cur.phase !== 'sing' || cur.done) return;
+      const done = cur.take.push(ev.t, ev.midi);
+      const near = (i) => m != null && Math.abs(m - cur.notes[i]) * 100 <= cur.tols[i];
+      light(near);
+      if (m != null) {
+        const on = cur.notes.some((_, i) => near(i));
+        live.innerHTML = `تو: <b>${esc(nearest(m, mode).fa)}</b> · ${on ? '<span class="good">روی یکی از نت‌های جمله ✓</span>' : '<span class="warn">بین نت‌ها</span>'}`;
+        announce(on ? `روی ${nearest(m, mode).fa}` : 'بین نت‌ها');
+      }
+      if (done) finishPhrase();
+    });
+
+    const results = [];
+    for (const [i, notes] of phrases.entries()) {
+      const got = await singPhrase(notes, `جمله‌ی ${fa(i + 1)} از ${fa(phrases.length)}`);
+      if (!got) return;
+      results.push(got);
+    }
+    // یک دور دیگر برای جمله‌هایی که سخت بودند (حداکثر دو تا)؛ امتیاز بهتر حساب می‌شود.
+    // اگر همه سخت بودند تکرار نمی‌کنیم: یا صدایی نمی‌رسد، یا این درس هنوز زود است.
+    const hard = results.filter((x) => x.score < 50);
+    const weak = hard.length < results.length ? hard.slice(0, 2) : [];
+    if (weak.length) {
+      st.textContent = 'یه بار دیگه، جمله‌هایی که سخت بودن…';
+      await sleep(1500);
+      if (aborted) return;
+      for (const [k, x] of weak.entries()) {
+        const got = await singPhrase(x.phrase, `تکرار: جمله‌ی ${fa(k + 1)} از ${fa(weak.length)}`);
+        if (!got) return;
+        if (got.score > x.score) Object.assign(x, got);
+      }
+    }
+    off();
+    off = null;
+    stopMic();
+    $('#ctl').classList.add('hidden');
+    $('#prog').textContent = `${fa(phrases.length)} جمله`;
+    ph.classList.add('hidden');
+    if (!results.some((x) => x.heard)) {
+      st.textContent = '';
+      $('#result').innerHTML = `
+        ${alertBox('صدایی نشنیدم. کمی بلندتر یا نزدیک‌تر به گوشی بخون. اگه باز هم نشد، تست میکروفون رو انجام بده.', micCheckLink)}
+        <button class="btn primary block" id="retry">دوباره</button>`;
+      $('#retry').onclick = () => route();
+      return;
+    }
+    const total = Math.round(results.reduce((a, x) => a + x.score, 0) / results.length);
+    const levelNote = finishScored(L, level, total);
+    recordNotes(results.flatMap((x) => x.notes).filter((n) => n.dev != null).map((n) => ({ step: n.target, score: n.score, dev: n.dev })));
+    st.textContent = 'تموم شد ✓';
+    const best = store.get().lessons[L.id].best;
+    const chart = (x, i) => phraseChart(
+      x.notes.map((n, j) => ({ ...n, name: stepName(n.target).fa, tol: tolFor(L, level, x.phrase[j]) })),
+      { label: `جمله‌ی ${fa(i + 1)}: ${x.notes.map((n) => `${stepName(n.target).fa} ${n.missed ? 'خوانده نشد' : `${fa(n.score)}٪`}`).join('، ')}` },
+    );
+    $('#result').innerHTML = `
+      <div class="card result">
+        <p class="eyebrow">امتیاز این تمرین</p>
+        <div class="score">${fa(total)}٪</div>
+        <p class="muted">بهترین امتیازت در این درس: ${fa(best)}٪</p>
+        ${levelNote}
+        <ul class="phrase-results">${results.map((x, i) => `<li>
+          <div class="phrase-head">
+            <span>جمله‌ی ${fa(i + 1)}</span>
+            <span class="clip-cell">
+              ${x.clip ? `<button class="btn small" data-clip="${i}" aria-pressed="false" aria-label="مقایسه‌ی صدای خودت با جمله‌ی ${fa(i + 1)}">▶ بشنو</button>` : ''}
+              <span class="${x.score >= 80 ? 'good' : x.score >= 50 ? '' : 'warn'}">${fa(x.score)}٪</span>
+            </span>
+          </div>
+          ${x.heard ? chart(x, i) : '<p class="muted small">صدایی شنیده نشد.</p>'}
+        </li>`).join('')}</ul>
+        <p class="muted small">هر ستون یک نته: نوار، جای درست نت و خط، صدای تو روی اون نت. خط بالای نوار یعنی بالاتر خوندی و زیر نوار یعنی پایین‌تر.</p>
+        ${results.some((x) => x.clip) ? '<p class="muted small">«بشنو» اول جمله‌ی درست و بعد صدای خودت رو پخش می‌کنه. این ضبط فقط روی همین صفحه‌ست؛ با بستنش پاک می‌شه و هیچ‌جا فرستاده نمی‌شه.</p>' : ''}
+      </div>
+      <div class="row">
+        <button class="btn grow" id="retry">دوباره</button>
+        ${nextLink(L, 'grow', '#/', 'خانه')}
+      </div>`;
+    $('#retry').onclick = () => route();
+    main.querySelectorAll('[data-clip]').forEach((b) => {
+      const x = results[b.dataset.clip];
+      b.onclick = () => player.play(x.phrase, x.clip, b);
+    });
+  };
+  $('#again').onclick = () => { if (cur && !cur.done && cur.phase === 'sing') hear(); };
+  $('#skip').onclick = () => finishPhrase();
 }
 
 // نفس و نگه داشتن نت
@@ -1097,7 +1305,7 @@ function viewProgress() {
   const s = store.get();
   const vt = s.range ? estimateVoiceType(s.range.low, s.range.high, s.settings.voice) : null;
   const week = weekSummary(s);
-  const trends = lessonTrends(s, LESSONS.filter((l) => ['seq', 'ear'].includes(l.kind)));
+  const trends = lessonTrends(s, LESSONS.filter((l) => ['seq', 'phrase', 'ear'].includes(l.kind)));
   const growth = rangeGrowth(s);
   const notes = noteStats(s);
   const holds = s.sustain.slice(-10).map((x) => x.secs);

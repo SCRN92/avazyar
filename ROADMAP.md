@@ -7,7 +7,7 @@
 
 ## 1. Where we are
 
-Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.1. It is a small installable web app with no server-side logic.
+Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.2. It is a small installable web app with no server-side logic.
 
 **What it does today**
 
@@ -93,7 +93,7 @@ Turn six lessons into a course that adapts to the learner.
 |---|---|---|---|---|
 | C1 | Describe lessons as data rather than code | Every lesson is hard-coded in one file today; this is the prerequisite for adding many more | M | Done |
 | C2 | Fit exercises to the singer's range (کوک): transpose scales and dastgah exercises to the measured range | Do-re-mi always starts on C and Shur on D, which falls outside a beginner's comfortable range for many voices. Needs decision D6 | M | Open: needs decision D6 |
-| C3 | Phrases, not only single notes: sing three to five notes in one breath, scored along the timeline | Real singing is movement between notes; holding isolated notes is only the first step | L | Open |
+| C3 | Phrases, not only single notes: sing three to five notes in one breath, scored along the timeline | Real singing is movement between notes; holding isolated notes is only the first step | L | Done: two phrase lessons (do-re-mi, and Shur with E-koron). Tempo is free, as in avaz: the sung line is split into notes and each is scored on pitch only. Verified with simulated singing; not yet tried with real voices, where slides and vibrato will test the note splitting |
 | C4 | Adaptive difficulty: tighten the tolerance as scores improve, repeat weak notes, and define clear "passed" levels | Tolerance is fixed per lesson, so lessons are either too easy or too hard | M | Done: three levels per lesson, missed notes repeated. Quarter-tones are never judged more strictly than 25 cents |
 | C5 | Ear training without singing: higher or lower, same or different, natural or koron | Lets learners practise silently, for example on public transport | M | Done: "higher or lower?" and "E or E-koron?" |
 | C6 | Drone practice: a sustained tonic to sing intervals against | A traditional and effective way to learn where the notes sit | S | Done. Needs headphones; not yet tried with a real microphone |
@@ -153,6 +153,7 @@ These are open questions rather than tasks. Each needs a teacher or real-voice t
 - **Quarter-tones are exact today.** The app places koron and sori exactly halfway between semitones. In practice Persian intervals are not fixed quarter-tones; they vary by dastgah and by performer, and the equal-quarter-tone model is disputed among musicians. The Shur lesson's strict 25-cent tolerance may therefore mark a stylistically correct note as wrong. J4 addresses this; the tolerance should be reviewed sooner.
 - **Two note names look unusual.** The note a quarter-tone above E is shown as «فا کرن» and the one above B as «دو کرن». A teacher should confirm whether «می سری» and «سی سری» would be more natural.
 - **Low voices.** The detector's comparison window is about 27 ms, barely more than two cycles of a note around 80 Hz, which looked like a risk for bass voices. Measured on synthetic voice-like tones it is not: detection stays within 3 cents from C2 to C6, including quarter-tones, and the tests now enforce that. No change to the window is needed on this evidence. Real voices, especially breathy or quiet ones, are still untested.
+- **Splitting a sung phrase into notes.** Phrase lessons let the learner sing at any speed, so the app has to decide where one sung note ends and the next begins. It starts a new note when the pitch moves by more than 0.4 of a semitone and stays there, or after a breath, then matches the sung notes to the written ones in order. On simulated singing (steps, slides, vibrato, breaths, wrong, skipped and extra notes) this behaves as intended and the tests enforce it. Real voices slide and waver more than the simulation; a learner who slides slowly between notes, or sings with wide vibrato, may be scored unfairly. The same note twice in a row cannot be told from one long note, so phrases avoid that.
 - **Voice-type estimate.** The bass/baritone/tenor and alto/mezzo/soprano labels come from simple range midpoints. They are presented as an estimate; a teacher should check that the labels are not misleading for beginners.
 
 ## 6. Decisions needed
@@ -173,7 +174,7 @@ These are open questions rather than tasks. Each needs a teacher or real-voice t
 - **Content quality.** Features are the easy part. Without a teacher, new lessons could teach habits a real teacher has to undo.
 - **iOS audio behaviour.** Microphone and audio handling differ on iPhone and are untested. R3 could turn out larger than estimated.
 - **Losing learners' progress.** Backups, data migrations and a guard against older code overwriting newer data are in place since v0.4.0. Rolling back to a build older than v0.4.0 after its data format changed would still lose progress, so roll back no further than that.
-- **Reachability.** The server is in France and the font comes from a CDN. Neither has been checked from inside Iran.
+- **Reachability.** The server is in France. Whether it can be reached from inside Iran has not been checked. (The font no longer comes from a CDN.)
 - **One growing file.** Almost all behaviour lives in `js/app.js`. Adding lessons without C1 first will make it hard to change safely.
 
 ## 8. Not planned

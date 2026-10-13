@@ -14,6 +14,7 @@ const SHELL = [
   './js/store.js',
   './js/lessons.js',
   './js/exercise.js',
+  './js/phrase.js',
   './js/stats.js',
   './js/charts.js',
   './js/lane.js',

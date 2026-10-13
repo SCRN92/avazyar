@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LESSONS, LEVEL_UP, QUARTER_MIN_TOL, SESSION_LENGTHS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from '../js/lessons.js';
+import { LESSONS, LEVEL_UP, QUARTER_MIN_TOL, SESSION_LENGTHS, voiceRange, buildNotes, buildPhrases, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from '../js/lessons.js';
 
 const lesson = (id) => LESSONS.find((l) => l.id === id);
 const state = (over = {}) => ({ settings: { voice: 'male' }, range: null, home: null, lessons: {}, sessions: [], ...over });
@@ -18,14 +18,45 @@ test('every lesson has the fields its kind needs', () => {
     assert.ok(l.id && l.icon && l.title && l.sub, `lesson ${l.id} is missing a basic field`);
     assert.ok(!ids.has(l.id), `duplicate id ${l.id}`);
     ids.add(l.id);
-    assert.ok(['warmup', 'range', 'home', 'sustain', 'seq', 'ear'].includes(l.kind), `unknown kind ${l.kind}`);
+    assert.ok(['warmup', 'range', 'home', 'sustain', 'seq', 'ear', 'phrase'].includes(l.kind), `unknown kind ${l.kind}`);
     if (l.kind === 'seq') {
       assert.ok(l.intro && l.tols.length >= 1 && l.notes.steps.length >= 3, `seq lesson ${l.id} is incomplete`);
       assert.ok(l.tols.every((t, i) => i === 0 || t < l.tols[i - 1]), `${l.id}: each level must be stricter than the last`);
       assert.ok(l.notes.from === 'home' || Number.isInteger(l.notes.root));
     }
     if (l.kind === 'ear') assert.ok(l.intro && ['updown', 'koron'].includes(l.quiz), `ear lesson ${l.id} is incomplete`);
+    if (l.kind === 'phrase') {
+      assert.ok(l.intro && l.tols.length >= 1 && Number.isInteger(l.phrases.root) && l.phrases.steps.length >= 2, `phrase lesson ${l.id} is incomplete`);
+      assert.ok(l.tols.every((t, i) => i === 0 || t < l.tols[i - 1]), `${l.id}: each level must be stricter than the last`);
+      for (const steps of l.phrases.steps) {
+        assert.ok(steps.length >= 3 && steps.length <= 5, `${l.id}: a phrase has three to five notes`);
+        assert.ok(steps.every((o) => o >= 0 && o <= 7), `${l.id}: phrases stay within a fifth above the root`);
+        // سرعت خواندن آزاد است، پس دو نت یکسان پشت‌سرهم را نمی‌شود از یک نت کشیده تشخیص داد
+        assert.ok(steps.every((o, i) => i === 0 || o !== steps[i - 1]), `${l.id}: no note twice in a row`);
+      }
+    }
   }
+});
+
+test('phrases are built on one root that fits the voice', () => {
+  assert.deepEqual(buildPhrases(lesson('phrase'), MALE), [[48, 50, 52], [52, 50, 48], [48, 50, 52, 50, 48], [48, 50, 52, 53, 55]]);
+  assert.deepEqual(buildPhrases(lesson('shurphrase'), MALE)[0], [50, 51.5, 53]);
+  assert.deepEqual(buildPhrases(lesson('phrase'), FEMALE)[0], [60, 62, 64]);
+  assert.deepEqual(buildPhrases(lesson('shurphrase'), FEMALE)[3], [62, 63.5, 65, 67, 65]);
+  assert.deepEqual(buildPhrases(lesson('match'), MALE), []);
+  for (const l of LESSONS.filter((x) => x.kind === 'phrase')) {
+    for (const voice of [MALE, FEMALE]) {
+      for (const m of buildPhrases(l, voice).flat()) assert.ok(m >= voice.low && m <= voice.high, `${l.id}: ${m} is outside the default range`);
+    }
+  }
+});
+
+test('phrase lessons have levels, and quarter-tones keep their tolerance floor', () => {
+  assert.equal(levelCount(lesson('phrase')), 3);
+  assert.equal(tolFor(lesson('phrase'), 0, 50), 40);
+  assert.equal(tolFor(lesson('phrase'), 2, 50), 20);
+  assert.equal(tolFor(lesson('shurphrase'), 2, 51.5), QUARTER_MIN_TOL);
+  assert.equal(levelAfter(lesson('phrase'), 0, LEVEL_UP), 1);
 });
 
 test('default voice ranges when the range test has not been done', () => {

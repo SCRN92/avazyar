@@ -4,6 +4,8 @@
 //   notes: { from: 'home', steps }   فاصله‌ها (نیم‌پرده) نسبت به نت خانه‌ی کاربر
 //   notes: { root, steps }           فاصله‌ها نسبت به یک نت ثابت (۰ = دو، ۲ = ر، …) در اکتاوی که به صدای کاربر بخورد
 //   tols: دقت لازم (سنت) در هر سطح؛ با بهتر شدن امتیاز، سطح بالا می‌رود
+// kind: 'phrase'  چند نت پشت‌سرهم پخش می‌شود و کاربر همه را با یک نفس می‌خواند (سرعت آزاد)
+//   phrases: { root, steps }        هر عضو steps یک جمله است: فاصله‌ها نسبت به همان نت ثابت. دو نت یکسان پشت‌سرهم نیاید.
 // kind: 'ear'  درس گوش، بدون میکروفون
 //   quiz: 'updown' با gaps = بازه‌ی فاصله‌ی دو نت (نیم‌پرده) در هر سطح
 //   quiz: 'koron'  با roots = نت‌های شروع در هر سطح
@@ -45,6 +47,12 @@ export const LESSONS = [
     notes: { root: 0, steps: [0, 2, 4, 5, 7, 5, 4, 2, 0] },
   },
   {
+    id: 'phrase', kind: 'phrase', icon: '🌊', mins: 1.5, tols: [40, 30, 20],
+    title: 'اولین جمله‌ها', sub: 'چند نت پشت‌سرهم، با یک نفس',
+    intro: 'آواز یعنی حرکت از یه نت به نت بعدی. آوازیار چند نت رو پشت‌سرهم پخش می‌کنه؛ تو همه رو با یه نفس و با «آ» بخون. عجله نکن: سرعتش با خودته، فقط درست بودن نت‌ها مهمه.',
+    phrases: { root: 0, steps: [[0, 2, 4], [4, 2, 0], [0, 2, 4, 2, 0], [0, 2, 4, 5, 7]] },
+  },
+  {
     id: 'koron', kind: 'ear', icon: '🎼', mins: 1, quiz: 'koron', roots: [[2], [2, 9, 7]],
     title: 'گوش: می یا می کرن؟', sub: 'رنگ ربع‌پرده رو با گوش بشناس',
     intro: 'اول یه نت پایه پخش می‌شه و بعد نت دوم. نت دوم یا یه پرده‌ی کامل بالاتره، یا یه ربع‌پرده کمتر از اون (کرن). بگو کدوم رو شنیدی. برای این تمرین میکروفون لازم نیست.',
@@ -55,6 +63,12 @@ export const LESSONS = [
     intro: 'موسیقی ایرانی نت‌هایی داره که بین دو کلید پیانو هستن. «می کرن» حدود یه ربع‌پرده پایین‌تر از «می»‌ه، و همون رنگ آشنای دستگاه شوره. دقت این درس سخت‌گیرانه‌تره.',
     notes: { root: 2, steps: [0, 1.5, 3, 5, 3, 1.5, 0] },
   },
+  {
+    id: 'shurphrase', kind: 'phrase', icon: '🪶', mins: 1.5, tols: [40, 30, 25],
+    title: 'جمله‌هایی با ربع‌پرده', sub: 'ر، می کرن، فا در یک نفس',
+    intro: 'همون نت‌های درس شور، این بار پشت‌سرهم و با یه نفس. موقع بالا رفتن و برگشتن، «می کرن» رو گم نکن: نه خودِ «می»، نه نیم‌پرده پایین‌ترش.',
+    phrases: { root: 2, steps: [[0, 1.5, 3], [3, 1.5, 0], [0, 1.5, 3, 1.5, 0], [0, 1.5, 3, 5, 3]] },
+  },
 ];
 
 export const PASS = 80; // امتیاز قبولی
@@ -64,7 +78,7 @@ export const EAR_QUESTIONS = 8;
 // اندازه‌ی کرن و سری در اجرای واقعی ثابت نیست؛ برای ربع‌پرده‌ها هیچ‌وقت سخت‌گیرتر از این نمی‌شویم
 export const QUARTER_MIN_TOL = 25;
 
-const SCORED = ['seq', 'ear'];
+const SCORED = ['seq', 'ear', 'phrase'];
 
 export function voiceRange(state) {
   const female = state.settings.voice === 'female';
@@ -80,6 +94,14 @@ export function buildNotes(lesson, { low, high, home }) {
   if (n.from === 'home') return n.steps.map((o) => Math.min(high, Math.max(low, home + o)));
   const root = fitRoot(n.root, Math.max(...n.steps), low, high);
   return n.steps.map((o) => root + o);
+}
+
+// جمله‌های یک درس برای صدای این کاربر؛ همه‌ی جمله‌های درس از یک نت پایه ساخته می‌شوند
+export function buildPhrases(lesson, { low, high }) {
+  const p = lesson.phrases;
+  if (!p) return [];
+  const root = fitRoot(p.root, Math.max(...p.steps.flat()), low, high);
+  return p.steps.map((steps) => steps.map((o) => root + o));
 }
 
 export function levelCount(lesson) {
@@ -141,7 +163,7 @@ export function earQuestion(lesson, level, voice, rnd = Math.random) {
 
 export const SESSION_LENGTHS = [5, 10, 15];
 const RETEST_AFTER = 30 * 24 * 3600 * 1000; // محدوده‌ی صدا با تمرین عوض می‌شود؛ ماهی یک بار دوباره می‌سنجیم
-const PRACTICE = ['seq', 'ear', 'sustain'];
+const PRACTICE = ['seq', 'ear', 'sustain', 'phrase'];
 
 const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
 

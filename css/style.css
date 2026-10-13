@@ -338,6 +338,43 @@ a { color: var(--primary); text-decoration: none; }
 .range-chart .bar-now { fill: var(--primary); }
 .chart-label { fill: var(--muted); font-size: 12px; font-family: inherit; }
 
+.phrase-chart { display: block; width: 100%; max-width: 360px; height: auto; margin: 6px auto 0; direction: ltr; }
+.phrase-chart text { direction: rtl; }
+.ph-hit { fill: transparent; }
+.ph-sep { stroke: var(--grid); }
+.ph-band { fill: var(--band); }
+/* نت درست کم‌رنگ می‌ماند تا خط صدای کاربر، که حرف اصلی نمودار است، رویش دیده شود */
+.ph-target { stroke: var(--muted-soft); stroke-width: 1; }
+.ph-sung { fill: none; stroke: var(--text); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.ph-good .ph-sung { stroke: var(--good-ink); }
+.ph-low .ph-sung { stroke: var(--warn-ink); }
+.ph-missed .ph-band { fill: none; stroke: var(--muted-soft); stroke-dasharray: 3 3; }
+.ph-missed .ph-target { stroke: none; }
+
+.phrase-results { list-style: none; padding: 0; margin: 8px 0; }
+.phrase-results li { padding: 10px 0; border-top: 1px solid var(--border); }
+.phrase-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 700; }
+
+/* نت‌های جمله به ترتیب، از چپ به راست مثل نمودار زنده */
+.phrase { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 4px; list-style: none; padding: 0; margin: 10px 0; min-height: 2.6em; }
+.phrase li { display: flex; align-items: center; gap: 4px; }
+.phrase li[data-dir]::before { color: var(--muted); font-size: 0.9rem; }
+.phrase li[data-dir="up"]::before { content: '↗'; }
+.phrase li[data-dir="down"]::before { content: '↘'; }
+.phrase .chip {
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--primary);
+  transition: background-color 0.1s, border-color 0.1s;
+}
+.phrase .on .chip { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.phrase .hit .chip { border-color: var(--good-ink); color: var(--good-ink); }
+.phrase .off .chip { border-color: var(--warn-ink); color: var(--warn-ink); }
+.phrase .miss .chip { border-style: dashed; color: var(--muted); }
+
 .clip-cell { display: flex; align-items: center; gap: 12px; }
 .clip-cell .btn[aria-pressed="true"] { background: var(--primary); color: var(--primary-ink); border-color: transparent; }
 .note-scores li:has(.clip-cell) { align-items: center; }

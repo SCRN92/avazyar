@@ -11,8 +11,7 @@ export class Lane {
     this.win = windowMs;
     this.mode = mode;
     this.pts = [];
-    this.target = null;
-    this.tol = 35;
+    this.targets = []; // نت‌های هدف: [{ m, tol }]
     this.center = null;
     this.onResize = () => this.resize();
     window.addEventListener('resize', this.onResize);
@@ -30,16 +29,22 @@ export class Lane {
   }
 
   setTarget(m, tol) {
-    this.target = m;
-    this.tol = tol;
-    if (m != null) this.center = m;
+    this.setTargets(m == null ? [] : [{ m, tol }]);
+  }
+
+  // چند نت هدف با هم (برای جمله‌ها)؛ نمودار وسط آن‌ها می‌ایستد
+  setTargets(list) {
+    this.targets = list;
+    if (!list.length) return;
+    const ms = list.map((x) => x.m);
+    this.center = (Math.min(...ms) + Math.max(...ms)) / 2;
   }
 
   push(t, m) {
     this.pts.push({ t, m });
     const cut = t - this.win;
     while (this.pts.length && this.pts[0].t < cut) this.pts.shift();
-    if (this.target == null && m != null) {
+    if (!this.targets.length && m != null) {
       this.center = this.center == null ? m : this.center + (m - this.center) * 0.08;
     }
   }
@@ -97,26 +102,28 @@ export class Lane {
       // ربع‌پرده‌ها فقط وقتی اسم می‌گیرند که خودشان نت هدف باشند، تا برچسب‌ها شلوغ نشوند
       // اگر جا تنگ است، فقط نت‌های طبیعی (بدون دیز) اسم می‌گیرند
       const crowded = h / this.span < 16;
-      const label = s === this.target || (!quarter && !(crowded && stepName(s).fa.includes('دیز')));
+      const isTarget = this.targets.some((x) => x.m === s);
+      // وقتی چند نت هدف هست، فقط همان‌ها اسم می‌گیرند
+      const label = isTarget || (this.targets.length < 2 && !quarter && !(crowded && stepName(s).fa.includes('دیز')));
       if (label) {
-        g.fillStyle = col(s === this.target ? '--accent-ink' : '--muted');
+        g.fillStyle = col(isTarget ? '--accent-ink' : '--muted');
         g.fillText(stepName(s).fa, 4, y);
       }
     }
     g.setLineDash([]);
 
     // نوار هدف
-    if (this.target != null) {
-      const t = this.tol / 100;
-      const y1 = this.y(this.target + t);
-      const y2 = this.y(this.target - t);
+    for (const target of this.targets) {
+      const t = target.tol / 100;
+      const y1 = this.y(target.m + t);
+      const y2 = this.y(target.m - t);
       g.fillStyle = col('--band');
       g.fillRect(LABEL_W, y1, w - LABEL_W, y2 - y1);
       g.strokeStyle = col('--accent');
       g.lineWidth = 2;
       g.beginPath();
-      g.moveTo(LABEL_W, this.y(this.target));
-      g.lineTo(w, this.y(this.target));
+      g.moveTo(LABEL_W, this.y(target.m));
+      g.lineTo(w, this.y(target.m));
       g.stroke();
     }
 
@@ -124,7 +131,7 @@ export class Lane {
     const now = performance.now();
     const x = (t) => LABEL_W + (w - LABEL_W - 14) * (1 - (now - t) / this.win);
     const clampY = (v) => Math.max(5, Math.min(h - 5, v));
-    const ok = (m) => this.target == null || Math.abs(m - this.target) * 100 <= this.tol;
+    const ok = (m) => !this.targets.length || this.targets.some((x) => Math.abs(m - x.m) * 100 <= x.tol);
     g.lineWidth = 3;
     g.lineCap = 'round';
     let prev = null;
