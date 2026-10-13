@@ -1,13 +1,13 @@
 # Avazyar roadmap
 
 > **Status:** draft proposal, 13 October 2026. Not yet agreed with the repository owner.
-> **Progress:** v0.1.1, v0.2 and the v0.3 items marked done are live. Items marked open are not started. Nothing is merged into `main` yet; the work sits in pull requests.
+> **Progress:** v0.1.1, v0.2 and the v0.3 and v0.4 items marked done are live. Items marked open are not started. Nothing is merged into `main` yet; the work sits in pull requests.
 > **Sizes** are rough guesses for one developer: **S** = up to half a day, **M** = 1–3 days, **L** = a week or more.
 > Milestones are ordered by dependency, not by date. No dates are promised.
 
 ## 1. Where we are
 
-Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.3.1. It is a small installable web app with no server-side logic.
+Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.0. It is a small installable web app with no server-side logic.
 
 **What it does today**
 
@@ -17,7 +17,7 @@ Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.3.1. It is a smal
 - A daily session of 5, 10 or 15 minutes that the app plans from the learner's own progress.
 - A free tuner with a live pitch graph and a drone note for interval practice.
 - A microphone check that adapts to room noise, and a screen that stays awake while practising.
-- Scores, a daily streak and a chart of the last 20 scores.
+- Scores, a daily streak, and a progress page with the week's practice, the trend of each lesson, the voice range over time and accuracy per note.
 - Works offline with nothing loaded from third parties. Progress is stored on the learner's device and can be backed up to a file.
 
 **The biggest gaps**
@@ -102,15 +102,15 @@ Turn six lessons into a course that adapts to the learner.
 
 ### v0.4 — Hear yourself, see progress
 
-| ID | Item | Why | Size |
-|---|---|---|---|
-| P1 | Record and play back an attempt next to the reference, on the device only and deleted automatically | Hearing your own voice is the fastest feedback a singer can get | M |
-| P2 | Progress that means something: trends per lesson, range over time, accuracy per note, a weekly summary | Only the latest range is kept, and the chart mixes all lessons into one row of bars | M |
-| P3 | Share a progress report through the phone's share sheet | The app tells learners to get feedback from a teacher; this gives them something to show | S |
-| P4 | Shareable exercises: encode an exercise in a link so a teacher can send "practise this" | Adds a teacher workflow with no server and no accounts | M |
-| P5 | Gentle motivation: milestones, and a way to keep a streak through a missed day | Keeps beginners coming back without pressure | S |
-| P6 | Reference sound options: a softer voice-like tone and instrument samples such as setar or ney | The synthetic tone is hard for some beginners to match. Needs decision D7 | M |
-| P7 | A child-voice preset and finer voice presets | Only "male" and "female" starting ranges exist | S |
+| ID | Item | Why | Size | Status |
+|---|---|---|---|---|
+| P1 | Record and play back an attempt next to the reference, on the device only and deleted automatically | Hearing your own voice is the fastest feedback a singer can get | M | Open |
+| P2 | Progress that means something: trends per lesson, range over time, accuracy per note, a weekly summary | Only the latest range is kept, and the chart mixes all lessons into one row of bars | M | Done: weekly summary, per-lesson trends, range over time, accuracy and tendency per note |
+| P3 | Share a progress report through the phone's share sheet | The app tells learners to get feedback from a teacher; this gives them something to show | S | Open |
+| P4 | Shareable exercises: encode an exercise in a link so a teacher can send "practise this" | Adds a teacher workflow with no server and no accounts | M | Open |
+| P5 | Gentle motivation: milestones, and a way to keep a streak through a missed day | Keeps beginners coming back without pressure | S | Open |
+| P6 | Reference sound options: a softer voice-like tone and instrument samples such as setar or ney | The synthetic tone is hard for some beginners to match. Needs decision D7 | M | Open: needs decision D7 |
+| P7 | A child-voice preset and finer voice presets | Only "male" and "female" starting ranges exist | S | Open |
 
 ### v0.5 — Notation track
 
@@ -171,7 +171,7 @@ These are open questions rather than tasks. Each needs a teacher or real-voice t
 
 - **Content quality.** Features are the easy part. Without a teacher, new lessons could teach habits a real teacher has to undo.
 - **iOS audio behaviour.** Microphone and audio handling differ on iPhone and are untested. R3 could turn out larger than estimated.
-- **Losing learners' progress.** Until R4 and R5 are done, any storage clean-up or lesson restructuring can erase history.
+- **Losing learners' progress.** Backups, data migrations and a guard against older code overwriting newer data are in place since v0.4.0. Rolling back to a build older than v0.4.0 after its data format changed would still lose progress, so roll back no further than that.
 - **Reachability.** The server is in France and the font comes from a CDN. Neither has been checked from inside Iran.
 - **One growing file.** Almost all behaviour lives in `js/app.js`. Adding lessons without C1 first will make it hard to change safely.
 
