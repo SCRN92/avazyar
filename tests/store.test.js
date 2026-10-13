@@ -49,7 +49,8 @@ test('v0.1 data is migrated without losing anything', async () => {
   assert.deepEqual(s.range, old.range);
   assert.deepEqual(s.rangeHistory, [old.range], 'the existing range seeds the history');
   assert.equal(s.home, 62);
-  assert.deepEqual(s.lessons, old.lessons);
+  assert.deepEqual(s.lessons, { match: { best: 80, last: 70, count: 3, level: 0 } }, 'lessons start at the first level');
+  assert.deepEqual(s.sustain, []);
   assert.deepEqual(s.sessions, old.sessions);
   assert.deepEqual(s.days, old.days);
 });
@@ -61,8 +62,8 @@ test('recordSession tracks best score, count and practice days', async () => {
   recordSession('scale', 70, day(2026, 10, 11));
   recordSession('warmup', null, day(2026, 10, 11));
   const s = store.get();
-  assert.deepEqual(s.lessons.scale, { best: 85, last: 70, count: 3 });
-  assert.deepEqual(s.lessons.warmup, { best: null, last: null, count: 1 });
+  assert.deepEqual(s.lessons.scale, { best: 85, last: 70, count: 3, level: 0 });
+  assert.deepEqual(s.lessons.warmup, { best: null, last: null, count: 1, level: 0 });
   assert.deepEqual(s.days, ['2026-10-10', '2026-10-11']);
   assert.equal(s.sessions.length, 4);
 });
@@ -113,6 +114,8 @@ test('a backup can be exported and restored into a clean install', async () => {
   a.store.update((s) => { s.settings.voice = 'female'; s.settings.micGate = 0.01; s.home = 60; });
   a.setRange(57, 72, day(2026, 10, 1));
   a.recordSession('shur', 77, day(2026, 10, 2));
+  a.setLevel('shur', 2);
+  a.recordSustain(8.4, 91, day(2026, 10, 2));
   const backup = a.exportData(day(2026, 10, 3));
   assert.equal(JSON.parse(backup).app, 'avazyar');
 
@@ -139,14 +142,15 @@ test('a backup with junk fields is cleaned up on import', async () => {
   importData(JSON.stringify({
     app: 'avazyar',
     data: {
-      schema: 2,
+      schema: 3,
       settings: { mode: 'klingon', voice: 'robot', micGate: 'loud', extra: 1 },
       range: { low: 'x' },
       rangeHistory: [{ low: 45, high: 60, date: 1 }, null, { low: 1 }],
       home: 'do',
       sessions: [{ date: 1, lesson: 'match', score: 50 }, { lesson: 'match' }, 'x', { date: 2, lesson: 'warmup', score: null }],
       days: ['2026-10-01', 'yesterday', 5],
-      lessons: { match: { best: 50, last: 50, count: 1 }, bad: 'x' },
+      lessons: { match: { best: 50, last: 50, count: 1, level: -4.5 }, bad: 'x' },
+      sustain: [{ date: 1, secs: 6.2, steady: 80 }, { secs: 3 }, 'x'],
     },
   }));
   const s = store.get();
@@ -156,5 +160,42 @@ test('a backup with junk fields is cleaned up on import', async () => {
   assert.equal(s.home, null);
   assert.equal(s.sessions.length, 2);
   assert.deepEqual(s.days, ['2026-10-01']);
-  assert.deepEqual(Object.keys(s.lessons), ['match']);
+  assert.deepEqual(s.lessons, { match: { best: 50, last: 50, count: 1, level: 0 } });
+  assert.deepEqual(s.sustain, [{ date: 1, secs: 6.2, steady: 80 }]);
+});
+
+test('v0.2 data gains lesson levels and an empty sustain history', async () => {
+  const v2 = {
+    schema: 2,
+    settings: { mode: 'irani', voice: 'male', micGate: 0.004, hideInstallHint: true },
+    range: { low: 45, high: 62, date: 5 },
+    rangeHistory: [{ low: 45, high: 62, date: 5 }],
+    home: 52,
+    lessons: { shur: { best: 90, last: 90, count: 4 } },
+    sessions: [{ date: 5, lesson: 'shur', score: 90 }],
+    days: ['2026-10-12'],
+  };
+  const { store, SCHEMA } = await freshStore(v2);
+  const s = store.get();
+  assert.equal(s.schema, SCHEMA);
+  assert.deepEqual(s.lessons.shur, { best: 90, last: 90, count: 4, level: 0 });
+  assert.deepEqual(s.sustain, []);
+  assert.equal(s.settings.micGate, 0.004);
+  assert.equal(s.settings.hideInstallHint, true);
+  assert.deepEqual(s.rangeHistory, v2.rangeHistory);
+});
+
+test('levels and sustain records are stored', async () => {
+  const { store, recordSession, setLevel, recordSustain, bestSustain } = await freshStore();
+  setLevel('match', 1);
+  assert.equal(store.get().lessons.match, undefined, 'no level for a lesson that was never done');
+  recordSession('match', 90, day(2026, 10, 10));
+  setLevel('match', 1);
+  recordSession('match', 60, day(2026, 10, 11));
+  assert.equal(store.get().lessons.match.level, 1, 'a later session keeps the level');
+  assert.equal(bestSustain(), 0);
+  recordSustain(6.5, 80, day(2026, 10, 10));
+  recordSustain(9.1, 70, day(2026, 10, 11));
+  recordSustain(4, 95, day(2026, 10, 12));
+  assert.equal(bestSustain(), 9.1);
 });

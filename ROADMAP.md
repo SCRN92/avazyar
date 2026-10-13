@@ -1,29 +1,36 @@
 # Avazyar roadmap
 
 > **Status:** draft proposal, 13 October 2026. Not yet agreed with the repository owner.
-> **Progress:** v0.1.1 and v0.2 are implemented on the `v0.2` branch, except the items marked open below. They are not yet merged or deployed.
+> **Progress:** v0.1.1 and v0.2 are live, except the items marked open below. The v0.3 items marked done are on the `v0.3` branch and not yet deployed. Nothing is merged into `main` yet.
 > **Sizes** are rough guesses for one developer: **S** = up to half a day, **M** = 1–3 days, **L** = a week or more.
 > Milestones are ordered by dependency, not by date. No dates are promised.
 
 ## 1. Where we are
 
-Avazyar v0.1 is live at https://avazyar.noonbarbari.xyz. It is a small installable web app with no server-side logic.
+Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.2. It is a small installable web app with no server-side logic. v0.3 is built on its own branch and not yet deployed.
 
-**What it does today**
+**What it does today (v0.2, live)**
 
 - Detects sung pitch in real time on the device, including quarter-tones (koron and sori).
 - Six lessons: warm-up, range test, home note, match a note, do-re-mi, and a first quarter-tone exercise in Shur.
 - A free tuner with a live pitch graph.
+- A microphone check that adapts to room noise, and a screen that stays awake while practising.
 - Scores, a daily streak and a chart of the last 20 scores.
-- Works offline; all progress is stored in the browser on the learner's device.
+- Works offline with nothing loaded from third parties. Progress is stored on the learner's device and can be backed up to a file.
+
+**Added in v0.3 (built, not yet live)**
+
+- Three more lessons: breath and sustain, and two ear-training lessons that need no microphone.
+- Levels: lessons get stricter as scores improve, and missed notes are offered again.
+- A drone note in the tuner for interval practice.
+- Lessons are defined as data, so adding one no longer means editing the app's logic.
 
 **The biggest gaps**
 
-- The curriculum stops after six lessons. The welcome screen promises notation "later", and nothing delivers it yet.
-- Progress lives only in browser storage, with no backup. Clearing site data loses everything.
-- It has only been checked in Chrome. It has not been verified on an iPhone or with a wide range of real voices.
-- There are no automated tests, and deployment is a manual copy to the server.
+- The curriculum is still short. The welcome screen promises notation "later", and nothing delivers it yet.
+- Nothing has been tested with a real microphone, on an iPhone, or with a screen reader. All checks so far use simulated audio in desktop Chrome.
 - Exercises use fixed notes (do-re-mi always starts on C, Shur always on D) rather than fitting the learner's range.
+- No teacher has reviewed the lesson content.
 
 ## 2. Principles
 
@@ -86,17 +93,17 @@ Make the existing six lessons dependable before adding more. Every later milesto
 
 Turn six lessons into a course that adapts to the learner.
 
-| ID | Item | Why | Size |
-|---|---|---|---|
-| C1 | Describe lessons as data rather than code | Every lesson is hard-coded in one file today; this is the prerequisite for adding many more | M |
-| C2 | Fit exercises to the singer's range (کوک): transpose scales and dastgah exercises to the measured range | Do-re-mi always starts on C and Shur on D, which falls outside a beginner's comfortable range for many voices. Needs decision D6 | M |
-| C3 | Phrases, not only single notes: sing three to five notes in one breath, scored along the timeline | Real singing is movement between notes; holding isolated notes is only the first step | L |
-| C4 | Adaptive difficulty: tighten the tolerance as scores improve, repeat weak notes, and define clear "passed" levels | Tolerance is fixed per lesson, so lessons are either too easy or too hard | M |
-| C5 | Ear training without singing: higher or lower, same or different, natural or koron | Lets learners practise silently, for example on public transport | M |
-| C6 | Drone practice: a sustained tonic to sing intervals against | A traditional and effective way to learn where the notes sit | S |
-| C7 | New units: Mahur first (closest to the familiar major scale), then the Shur family (Dashti, Abu Ata, Bayat-e Tork, Afshari), with short concept cards for شاهد, ایست and فرود | This is the content learners came for. Written with a teacher (decision D5) | L |
-| C8 | Breath and sustain: hold a note and measure length and steadiness | Breath support is the foundation of avaz and is easy to measure with what already exists | S |
-| C9 | A daily session of 5, 10 or 15 minutes built from warm-up, weak spots and one new thing | "Suggested for today" currently picks a single lesson | M |
+| ID | Item | Why | Size | Status |
+|---|---|---|---|---|
+| C1 | Describe lessons as data rather than code | Every lesson is hard-coded in one file today; this is the prerequisite for adding many more | M | Done |
+| C2 | Fit exercises to the singer's range (کوک): transpose scales and dastgah exercises to the measured range | Do-re-mi always starts on C and Shur on D, which falls outside a beginner's comfortable range for many voices. Needs decision D6 | M | Open: needs decision D6 |
+| C3 | Phrases, not only single notes: sing three to five notes in one breath, scored along the timeline | Real singing is movement between notes; holding isolated notes is only the first step | L | Open |
+| C4 | Adaptive difficulty: tighten the tolerance as scores improve, repeat weak notes, and define clear "passed" levels | Tolerance is fixed per lesson, so lessons are either too easy or too hard | M | Done: three levels per lesson, missed notes repeated. Quarter-tones are never judged more strictly than 25 cents |
+| C5 | Ear training without singing: higher or lower, same or different, natural or koron | Lets learners practise silently, for example on public transport | M | Done: "higher or lower?" and "E or E-koron?" |
+| C6 | Drone practice: a sustained tonic to sing intervals against | A traditional and effective way to learn where the notes sit | S | Done. Needs headphones; not yet tried with a real microphone |
+| C7 | New units: Mahur first (closest to the familiar major scale), then the Shur family (Dashti, Abu Ata, Bayat-e Tork, Afshari), with short concept cards for شاهد, ایست and فرود | This is the content learners came for. Written with a teacher (decision D5) | L | Open: needs a teacher (D5) |
+| C8 | Breath and sustain: hold a note and measure length and steadiness | Breath support is the foundation of avaz and is easy to measure with what already exists | S | Done |
+| C9 | A daily session of 5, 10 or 15 minutes built from warm-up, weak spots and one new thing | "Suggested for today" currently picks a single lesson | M | Open |
 
 ### v0.4 — Hear yourself, see progress
 

@@ -1,14 +1,18 @@
 // ذخیره‌ی پیشرفت روی خود گوشی (localStorage)
 const KEY = 'avazyar.v1';
 
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+
 // نسخه‌ی ساختار داده‌ها؛ با هر تغییر ساختار یکی زیاد می‌شود و یک تابع به MIGRATIONS اضافه می‌شود
-export const SCHEMA = 2;
+export const SCHEMA = 3;
 const DEFAULT = {
   schema: SCHEMA,
   settings: { mode: 'irani', voice: null, micGate: null, hideInstallHint: false },
   range: null,
   rangeHistory: [],
   home: null,
+  sustain: [],
   lessons: {},
   sessions: [],
   days: [],
@@ -19,10 +23,12 @@ const MIGRATIONS = {
   1: (s) => {
     s.rangeHistory = s.range ? [{ ...s.range }] : [];
   },
+  2: (s) => {
+    s.sustain = [];
+    for (const L of Object.values(isObj(s.lessons) ? s.lessons : {})) if (isObj(L)) L.level = 0;
+  },
 };
 
-const clone = (o) => JSON.parse(JSON.stringify(o));
-const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const isRange = (r) => isObj(r) && num(r.low) != null && num(r.high) != null;
 
@@ -43,6 +49,11 @@ export function normalize(raw) {
   if (isRange(s.range)) d.range = s.range;
   if (Array.isArray(s.rangeHistory)) d.rangeHistory = s.rangeHistory.filter(isRange);
   d.home = num(s.home);
+  if (Array.isArray(s.sustain)) {
+    d.sustain = s.sustain
+      .filter((x) => isObj(x) && num(x.date) != null && num(x.secs) != null)
+      .map((x) => ({ date: x.date, secs: x.secs, steady: num(x.steady) }));
+  }
   if (Array.isArray(s.sessions)) {
     d.sessions = s.sessions
       .filter((x) => isObj(x) && num(x.date) != null && typeof x.lesson === 'string')
@@ -51,7 +62,7 @@ export function normalize(raw) {
   if (Array.isArray(s.days)) d.days = s.days.filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x));
   if (isObj(s.lessons)) {
     for (const [id, L] of Object.entries(s.lessons)) {
-      if (isObj(L)) d.lessons[id] = { best: num(L.best), last: num(L.last), count: num(L.count) ?? 0 };
+      if (isObj(L)) d.lessons[id] = { best: num(L.best), last: num(L.last), count: num(L.count) ?? 0, level: Math.max(0, Math.floor(num(L.level) ?? 0)) };
     }
   }
   return d;
@@ -101,7 +112,7 @@ export function recordSession(lessonId, score, now = new Date()) {
   store.update((s) => {
     s.sessions.push({ date: now.getTime(), lesson: lessonId, score });
     if (s.sessions.length > 500) s.sessions.shift();
-    const L = s.lessons[lessonId] || { best: null, last: null, count: 0 };
+    const L = s.lessons[lessonId] || { best: null, last: null, count: 0, level: 0 };
     L.count++;
     L.last = score;
     if (score != null && (L.best == null || score > L.best)) L.best = score;
@@ -118,6 +129,21 @@ export function setRange(low, high, now = new Date()) {
     if (s.rangeHistory.length > 100) s.rangeHistory.shift();
   });
 }
+
+export function setLevel(lessonId, level) {
+  store.update((s) => {
+    if (s.lessons[lessonId]) s.lessons[lessonId].level = level;
+  });
+}
+
+export function recordSustain(secs, steady, now = new Date()) {
+  store.update((s) => {
+    s.sustain.push({ date: now.getTime(), secs, steady });
+    if (s.sustain.length > 100) s.sustain.shift();
+  });
+}
+
+export const bestSustain = () => state.sustain.reduce((a, x) => Math.max(a, x.secs), 0);
 
 // ---------- پشتیبان‌گیری ----------
 

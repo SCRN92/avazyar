@@ -346,6 +346,11 @@ a { color: var(--primary); text-decoration: none; }
 .tabbar a .ti { font-size: 1.3rem; line-height: 1.3; }
 .tabbar a.active { color: var(--primary); font-weight: 700; }
 
+.stepper { align-items: center; }
+.stepper .btn { min-width: 56px; font-size: 1.3rem; }
+.drone-note { font-size: 1.3rem; color: var(--primary); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
 .level {
   height: 14px;
   max-width: 320px;

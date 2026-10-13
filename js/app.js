@@ -1,7 +1,9 @@
 import { PitchInput, DEFAULT_GATE, gateFor, micVerdict } from './pitch.js';
-import { playTone } from './synth.js';
-import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fitRoot, fold } from './notes.js';
-import { store, recordSession, setRange, streak, exportData, importData } from './store.js';
+import { playTone, startDrone } from './synth.js';
+import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fold } from './notes.js';
+import { store, recordSession, setRange, setLevel, recordSustain, bestSustain, streak, exportData, importData } from './store.js';
+import { LESSONS, PASS, EAR_QUESTIONS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion } from './lessons.js';
+import { SustainTracker } from './exercise.js';
 import { Lane } from './lane.js';
 
 const VERSION = globalThis.AVAZYAR_VERSION;
@@ -119,65 +121,22 @@ const micCheckLink = '<a class="btn small" href="#/mic">تست میکروفون<
 
 // ---------- درس‌ها ----------
 
-const LESSONS = [
-  {
-    id: 'warmup', kind: 'warmup', icon: '🌬️',
-    title: 'گرم کردن و سلامت صدا', sub: 'قبل از هر تمرین، حدود ۲ دقیقه',
-  },
-  {
-    id: 'range', kind: 'range', icon: '📏',
-    title: 'محدوده‌ی صدای من', sub: 'پایین‌ترین و بالاترین نت راحتت',
-  },
-  {
-    id: 'home', kind: 'home', icon: '🏠',
-    title: 'نت خانه', sub: 'راحت‌ترین نت صدات رو پیدا کن',
-  },
-  {
-    id: 'match', kind: 'seq', icon: '🎯', tol: 35,
-    title: 'هم‌صدا شدن با نت', sub: 'بشنو و همون رو بخون',
-    intro: 'آوازیار یه نت پخش می‌کنه. خوب گوش کن، بعد با «آ» یا «او» همون نت رو بخون و نگهش دار. هر وقت خطت سبز شد، یعنی دقیقاً روی نتی.',
-  },
-  {
-    id: 'scale', kind: 'seq', icon: '🪜', tol: 35,
-    title: 'دو، ر، می', sub: 'اولین گام: بالا رفتن و برگشتن',
-    intro: 'دو، ر، می، فا، سل… و برگشت. این پایه‌ی همه‌ی ملودی‌هاست. هر نت رو بشنو و تکرار کن.',
-  },
-  {
-    id: 'shur', kind: 'seq', icon: '🎶', tol: 25,
-    title: 'اولین ربع‌پرده: حال‌وهوای شور', sub: 'ر، می کرن، فا',
-    intro: 'موسیقی ایرانی نت‌هایی داره که بین دو کلید پیانو هستن. «می کرن» حدود یه ربع‌پرده پایین‌تر از «می»‌ه، و همون رنگ آشنای دستگاه شوره. دقت این درس سخت‌گیرانه‌تره.',
-  },
-];
+const lessonLevel = (L) => clampLevel(L, store.get().lessons[L.id]?.level);
 
-function voiceRange() {
-  const s = store.get();
-  const female = s.settings.voice === 'female';
-  const r = s.range || (female ? { low: 57, high: 72 } : { low: 45, high: 62 });
-  const home = s.home ?? Math.round((r.low + r.high) / 2 - 2);
-  return { ...r, home };
-}
+const levelLine = (L, extra = '') => (levelCount(L) > 1
+  ? `<p class="muted small">سطح ${fa(lessonLevel(L) + 1)} از ${fa(levelCount(L))}${extra}</p>`
+  : '');
 
-function buildSeq(id) {
-  const { low, high, home } = voiceRange();
-  const clamp = (m) => Math.min(high, Math.max(low, m));
-  if (id === 'match') return [0, 2, -2, 4, 1].map((o) => clamp(home + o));
-  if (id === 'scale') {
-    const c = fitRoot(0, 7, low, high);
-    return [0, 2, 4, 5, 7, 5, 4, 2, 0].map((o) => c + o);
+// بعد از یک تمرین امتیازدار: ذخیره می‌کند و اگر امتیاز کافی بود به سطح بعد می‌برد. متن نتیجه را برمی‌گرداند.
+function finishScored(L, level, score) {
+  finishSession(L.id, score);
+  const next = levelAfter(L, level, score);
+  if (next > level) {
+    setLevel(L.id, next);
+    return `<p class="good">رفتی سطح ${fa(next + 1)} 🎉 از این به بعد دقت بیشتری لازمه.</p>`;
   }
-  if (id === 'shur') {
-    const d = fitRoot(2, 5, low, high);
-    return [0, 1.5, 3, 5, 3, 1.5, 0].map((o) => d + o);
-  }
-  return [];
-}
-
-function suggestNext() {
-  const s = store.get();
-  const fresh = LESSONS.find((l) => !s.lessons[l.id]?.count);
-  if (fresh) return fresh;
-  const seq = LESSONS.filter((l) => l.kind === 'seq');
-  return seq.reduce((a, b) => ((s.lessons[b.id]?.best ?? 0) < (s.lessons[a.id]?.best ?? 0) ? b : a));
+  if (score >= PASS && level === levelCount(L) - 1) return '<p class="good">این درس رو خوب بلدی ✓</p>';
+  return '';
 }
 
 // ---------- مسیریابی ----------
@@ -255,7 +214,7 @@ function viewWelcome() {
 
 function viewHome() {
   const s = store.get();
-  const next = suggestNext();
+  const next = suggestNext(s);
   const rangeText = s.range ? `${stepName(s.range.low).fa} تا ${stepName(s.range.high).fa}` : '؟';
   // آیفون پیشنهاد نصب خودکار ندارد؛ خودمان راهش را نشان می‌دهیم
   const iosHint = isIOS && !isStandalone() && !s.settings.hideInstallHint;
@@ -290,7 +249,7 @@ function viewHome() {
         const badge = r?.best != null ? `<span class="badge">${fa(r.best)}٪</span>` : r?.count ? '<span class="badge done">✓</span>' : '';
         return `<li><a href="#/lesson/${l.id}">
           <span class="num">${fa(i + 1)}</span>
-          <span class="li-text"><b>${l.icon} ${esc(l.title)}</b><span class="muted small">${esc(l.sub)}</span></span>
+          <span class="li-text"><b>${l.icon} ${esc(l.title)}</b><span class="muted small">${esc(l.sub)}${levelCount(l) > 1 && r?.level ? ` · سطح ${fa(r.level + 1)}` : ''}</span></span>
           ${badge}</a></li>`;
       }).join('')}
     </ol>
@@ -327,7 +286,17 @@ function viewTuner() {
     </div>
     <canvas class="lane" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
     <div id="err"></div>
-    <button class="btn primary block" id="go">روشن کردن میکروفون</button>`;
+    <button class="btn primary block" id="go">روشن کردن میکروفون</button>
+    <div class="card">
+      <h2 class="h3">نت پایه</h2>
+      <p class="muted small">یه نت ثابت پخش می‌شه تا بقیه‌ی نت‌ها رو نسبت به اون بخونی و فاصله‌ها دستت بیاد. حتماً با هدفون گوش بده، وگرنه میکروفون صدای خود نت پایه رو می‌گیره.</p>
+      <div class="row stepper">
+        <button class="btn" id="dlow" aria-label="نت پایه نیم‌پرده پایین‌تر">−</button>
+        <div class="grow center"><b class="drone-note" id="dname"></b> <span class="latin" id="dlatin"></span></div>
+        <button class="btn" id="dhigh" aria-label="نت پایه نیم‌پرده بالاتر">+</button>
+      </div>
+      <button class="btn block" id="drone" aria-pressed="false">پخش نت پایه</button>
+    </div>`;
   const lane = new Lane($('#lane'), { span: 10, mode });
   lane.start();
   const nb = $('#nb'), nl = $('#nl'), needle = $('#needle'), hz = $('#hz'), go = $('#go');
@@ -364,7 +333,32 @@ function viewTuner() {
       announce(`${n.fa}، ${Math.abs(n.cents) <= lim * 0.4 ? 'درست' : n.cents > 0 ? 'کمی بالاتر' : 'کمی پایین‌تر'}`);
     });
   };
-  cleanup = () => { off?.(); lane.stop(); };
+  let droneNote = voiceRange(store.get()).home;
+  let drone = null;
+  const showDrone = () => {
+    const n = stepName(droneNote);
+    $('#dname').textContent = n.fa;
+    $('#dlatin').textContent = n.latin;
+  };
+  const shiftDrone = (d) => {
+    droneNote = Math.min(84, Math.max(36, droneNote + d));
+    showDrone();
+    drone?.setFreq(midiToFreq(droneNote));
+  };
+  $('#dlow').onclick = () => shiftDrone(-1);
+  $('#dhigh').onclick = () => shiftDrone(1);
+  $('#drone').onclick = () => {
+    if (drone) {
+      drone.stop();
+      drone = null;
+    } else {
+      drone = startDrone(audio(), midiToFreq(droneNote));
+    }
+    $('#drone').textContent = drone ? 'قطع نت پایه' : 'پخش نت پایه';
+    $('#drone').setAttribute('aria-pressed', String(!!drone));
+  };
+  showDrone();
+  cleanup = () => { off?.(); lane.stop(); drone?.stop(); };
 }
 
 function lessonHead(L) {
@@ -377,7 +371,7 @@ function viewLesson(id) {
     location.hash = '#/';
     return;
   }
-  ({ warmup: runWarmup, range: runRange, home: runHome, seq: runSeq })[L.kind](L);
+  ({ warmup: runWarmup, range: runRange, home: runHome, seq: runSeq, sustain: runSustain, ear: runEar })[L.kind](L);
 }
 
 // گرم کردن
@@ -428,7 +422,7 @@ function runWarmup(L) {
     keepAwake(false);
     finishSession(L.id, null);
     $('#cd').textContent = 'صدات آماده‌ست ✓';
-    main.insertAdjacentHTML('beforeend', `<a class="btn primary block" href="#/lesson/${suggestNext().id}">برو سراغ تمرین بعدی</a>`);
+    main.insertAdjacentHTML('beforeend', `<a class="btn primary block" href="#/lesson/${suggestNext(store.get()).id}">برو سراغ تمرین بعدی</a>`);
   };
 }
 
@@ -621,11 +615,12 @@ function runHome(L) {
 // درس‌های «بشنو و تکرار کن»
 function runSeq(L) {
   const mode = store.get().settings.mode;
-  const targets = buildSeq(L.id);
-  const tol = L.tol;
+  const level = lessonLevel(L);
+  const targets = buildNotes(L, voiceRange(store.get()));
   main.innerHTML = `
     ${lessonHead(L)}
     <p class="muted">${esc(L.intro)}</p>
+    ${levelLine(L, ` · دقت لازم: ${fa(L.tols[level])} سنت`)}
     <div class="card center">
       <div class="muted small" id="prog">${fa(targets.length)} نت</div>
       <div class="note-big" id="tn">${esc(stepName(targets[0]).fa)}</div>
@@ -642,7 +637,7 @@ function runSeq(L) {
     </div>
     <div id="result"></div>`;
   const lane = new Lane($('#lane'), { span: 8, mode });
-  lane.setTarget(targets[0], tol);
+  lane.setTarget(targets[0], tolFor(L, level, targets[0]));
   lane.start();
   const st = $('#st'), live = $('#live');
   let aborted = false;
@@ -669,6 +664,26 @@ function runSeq(L) {
     st.textContent = 'حالا تو بخون 🎤';
     st.className = 'status sing';
   };
+  // یک نت را پخش می‌کند و امتیاز خواندن کاربر را برمی‌گرداند (اگر کاربر از صفحه رفته باشد: null)
+  const singNote = async (target, label) => {
+    const n = stepName(target);
+    const tol = tolFor(L, level, target);
+    $('#prog').textContent = label;
+    $('#tn').textContent = n.fa;
+    $('#tl').textContent = n.latin;
+    lane.setTarget(target, tol);
+    live.innerHTML = '&nbsp;';
+    const sc = await new Promise((resolve) => {
+      cur = { target, tol, phase: 'listen', voicedMs: 0, countedMs: 0, inTolMs: 0, done: false, resolve };
+      hear();
+    });
+    if (aborted) return null;
+    const heard = cur.voicedMs > 0;
+    st.className = 'status';
+    st.textContent = !heard ? 'صدایی نشنیدم 🤔' : sc >= 80 ? `عالی! ${fa(sc)}٪ 🌟` : sc >= 50 ? `خوب بود: ${fa(sc)}٪` : `${fa(sc)}٪. تمرین بیشتر، دقت بیشتر.`;
+    await sleep(1300);
+    return aborted ? null : sc;
+  };
 
   $('#go').onclick = async () => {
     try {
@@ -690,7 +705,7 @@ function runSeq(L) {
       if (ev.midi != null) {
         const m = fold(ev.midi, cur.target);
         const diff = (m - cur.target) * 100;
-        const inTol = Math.abs(diff) <= tol;
+        const inTol = Math.abs(diff) <= cur.tol;
         cur.voicedMs += dt;
         if (cur.voicedMs > 300) {
           cur.countedMs += dt;
@@ -704,31 +719,28 @@ function runSeq(L) {
     });
 
     const scores = [];
-    for (let i = 0; i < targets.length && !aborted; i++) {
-      const target = targets[i];
-      const n = stepName(target);
-      $('#prog').textContent = `نت ${fa(i + 1)} از ${fa(targets.length)}`;
-      $('#tn').textContent = n.fa;
-      $('#tl').textContent = n.latin;
-      lane.setTarget(target, tol);
-      live.innerHTML = '&nbsp;';
-      const sc = await new Promise((resolve) => {
-        cur = { target, phase: 'listen', voicedMs: 0, countedMs: 0, inTolMs: 0, done: false, resolve };
-        hear();
-      });
-      if (aborted) return;
-      const heard = cur.voicedMs > 0;
+    for (const [i, target] of targets.entries()) {
+      const sc = await singNote(target, `نت ${fa(i + 1)} از ${fa(targets.length)}`);
+      if (sc == null) return;
       scores.push({ target, sc });
-      st.className = 'status';
-      st.textContent = !heard ? 'صدایی نشنیدم 🤔' : sc >= 80 ? `عالی! ${fa(sc)}٪ 🌟` : sc >= 50 ? `خوب بود: ${fa(sc)}٪` : `${fa(sc)}٪. تمرین بیشتر، دقت بیشتر.`;
-      await sleep(1300);
     }
-    if (aborted) return;
+    // یک دور دیگر برای نت‌هایی که سخت بودند؛ امتیاز بهتر حساب می‌شود
+    const weak = scores.filter((x) => x.sc < 50).slice(0, 3);
+    if (weak.length && weak.length < scores.length) {
+      st.textContent = 'یه بار دیگه، نت‌هایی که سخت بودن…';
+      await sleep(1500);
+      if (aborted) return;
+      for (const [k, x] of weak.entries()) {
+        const sc = await singNote(x.target, `تکرار: نت ${fa(k + 1)} از ${fa(weak.length)}`);
+        if (sc == null) return;
+        x.sc = Math.max(x.sc, sc);
+      }
+    }
     off();
     off = null;
     stopMic();
     const total = Math.round(scores.reduce((a, b) => a + b.sc, 0) / scores.length);
-    finishSession(L.id, total);
+    const levelNote = finishScored(L, level, total);
     $('#ctl').classList.add('hidden');
     st.textContent = 'تموم شد ✓';
     const best = store.get().lessons[L.id].best;
@@ -737,6 +749,7 @@ function runSeq(L) {
         <p class="eyebrow">امتیاز این تمرین</p>
         <div class="score">${fa(total)}٪</div>
         <p class="muted">بهترین امتیازت در این درس: ${fa(best)}٪</p>
+        ${levelNote}
         <ul class="note-scores">${scores.map((x) => `<li><span>${esc(stepName(x.target).fa)}</span><span class="${x.sc >= 80 ? 'good' : x.sc >= 50 ? '' : 'warn'}">${fa(x.sc)}٪</span></li>`).join('')}</ul>
       </div>
       <div class="row">
@@ -747,6 +760,178 @@ function runSeq(L) {
   };
   $('#again').onclick = () => { if (cur && !cur.done && cur.phase === 'sing') hear(); };
   $('#skip').onclick = () => finishNote();
+}
+
+// نفس و نگه داشتن نت
+function runSustain(L) {
+  const mode = store.get().settings.mode;
+  const record = bestSustain();
+  main.innerHTML = `
+    ${lessonHead(L)}
+    <p class="muted">یه نفس آروم از شکم بگیر و یه نت راحت رو با «آ» تا جایی که راحتی، یکنواخت نگه دار. قبل از اینکه نفست تموم بشه رها کن؛ قرار نیست به خودت فشار بیاری.</p>
+    ${record ? `<p class="muted small">طولانی‌ترین نتت تا حالا: ${fa(record)} ثانیه</p>` : ''}
+    <div class="card center">
+      <div class="status" id="ins" role="status">آماده‌ای؟</div>
+      <div class="note-big" id="nb">–</div>
+      <div class="countdown" id="cd">&nbsp;</div>
+    </div>
+    <canvas class="lane short" id="lane" role="img" aria-label="نمودار زنده‌ی زیر و بمی صدا"></canvas>
+    <div id="err"></div>
+    <div id="result"></div>
+    <button class="btn primary block" id="go">شروع</button>`;
+  const lane = new Lane($('#lane'), { span: 10, mode });
+  lane.start();
+  let off = null;
+  let timeout = null;
+  cleanup = () => { off?.(); clearTimeout(timeout); lane.stop(); };
+
+  $('#go').onclick = async () => {
+    const go = $('#go');
+    go.classList.add('hidden');
+    $('#result').innerHTML = '';
+    try {
+      await startMic();
+    } catch (e) {
+      $('#err').innerHTML = alertBox(micError(e));
+      go.classList.remove('hidden');
+      return;
+    }
+    $('#err').innerHTML = '';
+    $('#ins').textContent = 'هر وقت آماده بودی، بخون و نگه دار…';
+    $('#nb').textContent = '–';
+    $('#cd').innerHTML = '&nbsp;';
+    const tracker = new SustainTracker();
+    const finish = () => {
+      off();
+      off = null;
+      clearTimeout(timeout);
+      stopMic();
+      const r = tracker.result();
+      go.textContent = 'دوباره';
+      go.classList.remove('hidden');
+      if (!r || r.secs < 2) {
+        $('#ins').textContent = '';
+        $('#result').innerHTML = r
+          ? alertBox('خیلی کوتاه بود. یه نفس آروم بگیر و نت رو دست‌کم دو ثانیه نگه دار.')
+          : alertBox('صدایی نشنیدم. کمی بلندتر یا نزدیک‌تر به گوشی بخون. اگه باز هم نشد، تست میکروفون رو انجام بده.', micCheckLink);
+        return;
+      }
+      const before = bestSustain();
+      finishSession(L.id, r.steady);
+      recordSustain(r.secs, r.steady);
+      go.classList.remove('primary');
+      $('#ins').textContent = 'تموم شد ✓';
+      $('#result').innerHTML = `
+        <div class="card result">
+          <p class="eyebrow">نتیجه</p>
+          <h2>${fa(r.secs)} ثانیه روی ${esc(nearest(r.note, mode).fa)}</h2>
+          <p>یکنواختی صدا: <b>${fa(r.steady)}٪</b></p>
+          ${before && r.secs > before ? '<p class="good">رکورد جدید 🎉</p>' : ''}
+          <p class="muted small">نفس عمیق از شکم و رها بودن شونه‌ها کمک می‌کنه نت رو طولانی‌تر و یکنواخت‌تر نگه داری. هیچ‌وقت تا آخرین ذره‌ی نفست نرو.</p>
+        </div>
+        <a class="btn primary block" href="#/">خانه</a>`;
+    };
+    timeout = setTimeout(() => { if (!tracker.started) finish(); }, 15000);
+    off = input.on((ev) => {
+      lane.push(ev.t, ev.midi);
+      const wasStarted = tracker.started;
+      const done = tracker.push(ev.t, ev.midi);
+      if (tracker.started && !wasStarted) $('#ins').textContent = 'همین‌طور آروم نگهش دار…';
+      if (tracker.started) {
+        $('#nb').textContent = nearest(tracker.center, mode).fa;
+        $('#cd').textContent = `${fa((tracker.ms / 1000).toFixed(1))} ثانیه`;
+      }
+      if (done) finish();
+    });
+  };
+}
+
+// درس‌های گوش: فقط شنیدن و انتخاب، بدون میکروفون
+function runEar(L) {
+  const level = lessonLevel(L);
+  const voice = voiceRange(store.get());
+  main.innerHTML = `
+    ${lessonHead(L)}
+    <p class="muted">${esc(L.intro)}</p>
+    ${levelLine(L)}
+    <div class="card center">
+      <div class="muted small" id="prog">${fa(EAR_QUESTIONS)} سؤال</div>
+      <div class="status" id="st" role="status">آماده‌ای؟</div>
+      <div class="live" id="live">&nbsp;</div>
+      <div class="row" id="choices"></div>
+    </div>
+    <button class="btn primary block" id="go">شروع</button>
+    <button class="btn block hidden" id="again">🔁 دوباره بشنو</button>
+    <div id="result"></div>`;
+  const st = $('#st'), live = $('#live'), box = $('#choices');
+  let aborted = false;
+  let q = null;
+  let waiting = false; // منتظر جواب کاربر
+  cleanup = () => { aborted = true; };
+  const setChoices = (on) => box.querySelectorAll('button').forEach((b) => { b.disabled = !on; });
+
+  const play = async () => {
+    waiting = false;
+    setChoices(false);
+    st.textContent = 'گوش کن… 👂';
+    st.className = 'status listen';
+    for (const m of q.tones) {
+      await playTone(audio(), midiToFreq(m), 0.8);
+      if (aborted) return;
+      await sleep(150);
+    }
+    st.textContent = 'کدوم بود؟';
+    st.className = 'status sing';
+    setChoices(true);
+    waiting = true;
+  };
+
+  $('#go').onclick = async () => {
+    audio();
+    $('#go').classList.add('hidden');
+    $('#again').classList.remove('hidden');
+    let right = 0;
+    for (let i = 0; i < EAR_QUESTIONS; i++) {
+      q = earQuestion(L, level, voice);
+      $('#prog').textContent = `سؤال ${fa(i + 1)} از ${fa(EAR_QUESTIONS)}`;
+      live.innerHTML = '&nbsp;';
+      box.innerHTML = q.choices.map((c, k) => `<button class="btn grow" data-k="${k}" disabled>${esc(c.label)}</button>`).join('');
+      const picked = new Promise((resolve) => {
+        box.querySelectorAll('button').forEach((b) => { b.onclick = () => resolve(q.choices[b.dataset.k]); });
+      });
+      await play();
+      if (aborted) return;
+      const choice = await picked;
+      if (aborted) return;
+      waiting = false;
+      setChoices(false);
+      if (choice.right) right++;
+      st.className = 'status';
+      st.textContent = choice.right ? 'درست ✓' : `این بار نه. جواب: ${q.choices.find((c) => c.right).label}`;
+      live.textContent = `${q.names[0]}، بعد ${q.names[1]}`;
+      await sleep(1500);
+      if (aborted) return;
+    }
+    const score = Math.round((100 * right) / EAR_QUESTIONS);
+    const levelNote = finishScored(L, level, score);
+    $('#again').classList.add('hidden');
+    box.innerHTML = '';
+    live.innerHTML = '&nbsp;';
+    st.textContent = 'تموم شد ✓';
+    $('#result').innerHTML = `
+      <div class="card result">
+        <p class="eyebrow">امتیاز این تمرین</p>
+        <div class="score">${fa(score)}٪</div>
+        <p class="muted">${fa(right)} از ${fa(EAR_QUESTIONS)} درست · بهترین امتیازت: ${fa(store.get().lessons[L.id].best)}٪</p>
+        ${levelNote}
+      </div>
+      <div class="row">
+        <button class="btn grow" id="retry">دوباره</button>
+        <a class="btn primary grow" href="#/">خانه</a>
+      </div>`;
+    $('#retry').onclick = () => route();
+  };
+  $('#again').onclick = () => { if (q && waiting) play(); };
 }
 
 function viewProgress() {
@@ -773,6 +958,7 @@ function viewProgress() {
            <p>تیپ صدای تخمینی: <b>${esc(vt.fa)}</b></p>`
         : '<p class="muted">هنوز تست محدوده رو انجام ندادی.</p><a class="btn small" href="#/lesson/range">انجام تست</a>'}
       ${s.home != null ? `<p>نت خانه: <b>${esc(stepName(s.home).fa)}</b></p>` : ''}
+      ${bestSustain() ? `<p>طولانی‌ترین نت: <b>${fa(bestSustain())} ثانیه</b></p>` : ''}
     </div>
     <div class="card">
       <h2 class="h3">امتیاز ۲۰ تمرین آخر</h2>
@@ -786,7 +972,7 @@ function viewProgress() {
       <ul class="note-scores">
         ${LESSONS.map((l) => {
           const r = s.lessons[l.id];
-          return `<li><span>${l.icon} ${esc(l.title)}</span><span class="muted">${r ? `${fa(r.count)} بار${r.best != null ? ` · بهترین ${fa(r.best)}٪` : ''}` : '—'}</span></li>`;
+          return `<li><span>${l.icon} ${esc(l.title)}</span><span class="muted">${r ? `${fa(r.count)} بار${r.best != null ? ` · بهترین ${fa(r.best)}٪` : ''}${levelCount(l) > 1 && r.level ? ` · سطح ${fa(r.level + 1)}` : ''}` : '—'}</span></li>`;
         }).join('')}
       </ul>
     </div>`;
