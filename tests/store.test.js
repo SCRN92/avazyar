@@ -199,3 +199,45 @@ test('levels and sustain records are stored', async () => {
   recordSustain(4, 95, day(2026, 10, 12));
   assert.equal(bestSustain(), 9.1);
 });
+
+test('v0.3 data gains an empty per-note record', async () => {
+  const v3 = { schema: 3, settings: { mode: 'irani', voice: 'female' }, sustain: [{ date: 1, secs: 5, steady: 90 }], lessons: { match: { best: 70, last: 70, count: 1, level: 1 } }, sessions: [], days: [] };
+  const { store, SCHEMA } = await freshStore(v3);
+  assert.equal(store.get().schema, SCHEMA);
+  assert.deepEqual(store.get().notes, {});
+  assert.equal(store.get().lessons.match.level, 1);
+  assert.equal(store.get().sustain.length, 1);
+});
+
+test('per-note accuracy accumulates by note name, whatever the octave', async () => {
+  const { store, recordNotes, saved } = await freshStore();
+  recordNotes([{ step: 50, score: 80, dev: -12 }, { step: 51.5, score: 60, dev: 20 }]);
+  recordNotes([{ step: 62, score: 100, dev: -4 }, { step: 63.5, score: 40, dev: 400 }]);
+  assert.deepEqual(store.get().notes, { 2: { n: 2, score: 180, dev: -16 }, 3.5: { n: 2, score: 100, dev: 120 } }, 'wild deviations are capped at 100 cents');
+  assert.deepEqual(saved().notes, store.get().notes);
+});
+
+test('junk in the per-note record is dropped on load', async () => {
+  const { store } = await freshStore({ schema: 4, notes: { 2: { n: 2, score: 180, dev: -16 }, 3.5: { n: 1, score: 50, dev: 0 }, x: { n: 1, score: 1, dev: 1 }, 7: { n: 0, score: 0, dev: 0 }, 9: 'no' } });
+  assert.deepEqual(Object.keys(store.get().notes).sort(), ['2', '3.5']);
+});
+
+test('data from a newer version is never overwritten', async () => {
+  const future = { schema: 99, settings: { voice: 'male' }, somethingNew: [1, 2, 3] };
+  const { store, recordSession, saved, SCHEMA } = await freshStore(future);
+  assert.equal(store.frozen, true);
+  assert.equal(store.get().settings.voice, null, 'the app starts empty rather than misreading the data');
+  store.update((s) => { s.settings.voice = 'female'; });
+  recordSession('match', 80, day(2026, 10, 13));
+  assert.deepEqual(saved(), future, 'storage is untouched');
+  assert.equal(store.get().sessions.length, 1, 'the app still works in memory');
+  store.reset();
+  assert.equal(store.frozen, false, 'an explicit reset by the learner takes over');
+  assert.equal(saved().schema, SCHEMA);
+});
+
+test('ordinary and corrupt data do not freeze the store', async () => {
+  assert.equal((await freshStore()).store.frozen, false);
+  assert.equal((await freshStore('{broken')).store.frozen, false);
+  assert.equal((await freshStore({ settings: { voice: 'male' } })).store.frozen, false);
+});

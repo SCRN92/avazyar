@@ -14,6 +14,8 @@ const SHELL = [
   './js/store.js',
   './js/lessons.js',
   './js/exercise.js',
+  './js/stats.js',
+  './js/charts.js',
   './js/lane.js',
   './fonts/Vazirmatn-Regular.woff2',
   './fonts/Vazirmatn-Bold.woff2',

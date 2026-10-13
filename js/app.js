@@ -1,9 +1,11 @@
 import { PitchInput, DEFAULT_GATE, gateFor, micVerdict } from './pitch.js';
 import { playTone, startDrone } from './synth.js';
 import { fa, nearest, stepName, midiToFreq, estimateVoiceType, fold } from './notes.js';
-import { store, recordSession, setRange, setLevel, recordSustain, bestSustain, streak, exportData, importData } from './store.js';
+import { store, recordSession, setRange, setLevel, recordSustain, recordNotes, bestSustain, streak, exportData, importData } from './store.js';
 import { LESSONS, PASS, EAR_QUESTIONS, SESSION_LENGTHS, voiceRange, buildNotes, levelCount, clampLevel, tolFor, levelAfter, suggestNext, earQuestion, planSession } from './lessons.js';
 import { SustainTracker } from './exercise.js';
+import { weekSummary, lessonTrends, rangeGrowth, noteStats } from './stats.js';
+import { sparkline, rangeChart } from './charts.js';
 import { Lane } from './lane.js';
 
 const VERSION = globalThis.AVAZYAR_VERSION;
@@ -208,6 +210,14 @@ function route() {
   });
   document.body.classList.toggle('no-tabbar', name === 'welcome');
   window.scrollTo(0, 0);
+  if (store.frozen && !$('#frozen')) {
+    main.insertAdjacentHTML('afterbegin', `
+      <div class="alert" id="frozen" role="alert">
+        <p>پیشرفت ذخیره‌شده‌ی تو با نسخه‌ی جدیدتری از آوازیار ساخته شده و این نسخه نمی‌تونه بخوندش. صفحه رو تازه کن تا نسخه‌ی جدید بیاد. تا اون موقع پیشرفتت دست‌نخورده می‌مونه و تمرین‌های الان ذخیره نمی‌شن.</p>
+        <button class="btn small" id="refresh">تازه‌سازی</button>
+      </div>`);
+    $('#refresh').onclick = () => location.reload();
+  }
   // بعد از عوض شدن صفحه، صفحه‌خوان از ابتدای محتوای جدید ادامه می‌دهد
   if (routed) main.focus({ preventScroll: true });
   routed = true;
@@ -780,15 +790,17 @@ function runSeq(L) {
     lane.setTarget(target, tol);
     live.innerHTML = '&nbsp;';
     const sc = await new Promise((resolve) => {
-      cur = { target, tol, phase: 'listen', voicedMs: 0, countedMs: 0, inTolMs: 0, done: false, resolve };
+      cur = { target, tol, phase: 'listen', voicedMs: 0, countedMs: 0, inTolMs: 0, devMs: 0, done: false, resolve };
       hear();
     });
     if (aborted) return null;
     const heard = cur.voicedMs > 0;
     st.className = 'status';
     st.textContent = !heard ? 'صدایی نشنیدم 🤔' : sc >= 80 ? `عالی! ${fa(sc)}٪ 🌟` : sc >= 50 ? `خوب بود: ${fa(sc)}٪` : `${fa(sc)}٪. تمرین بیشتر، دقت بیشتر.`;
+    // dev: میانگین فاصله از نت هدف به سنت (مثبت یعنی بالاتر)؛ اگر صدایی نبود null
+    const dev = cur.countedMs > 0 ? cur.devMs / cur.countedMs : null;
     await sleep(1300);
-    return aborted ? null : sc;
+    return aborted ? null : { sc, dev };
   };
 
   $('#go').onclick = async () => {
@@ -815,6 +827,7 @@ function runSeq(L) {
         cur.voicedMs += dt;
         if (cur.voicedMs > 300) {
           cur.countedMs += dt;
+          cur.devMs += diff * dt;
           if (inTol) cur.inTolMs += dt;
         }
         live.innerHTML = `تو: <b>${esc(nearest(m, mode).fa)}</b> · ${inTol ? '<span class="good">روی نتی ✓</span>' : diff > 0 ? '<span class="warn">کمی بالاتری ↓</span>' : '<span class="warn">کمی پایین‌تری ↑</span>'}`;
@@ -826,9 +839,9 @@ function runSeq(L) {
 
     const scores = [];
     for (const [i, target] of targets.entries()) {
-      const sc = await singNote(target, `نت ${fa(i + 1)} از ${fa(targets.length)}`);
-      if (sc == null) return;
-      scores.push({ target, sc });
+      const got = await singNote(target, `نت ${fa(i + 1)} از ${fa(targets.length)}`);
+      if (!got) return;
+      scores.push({ target, ...got });
     }
     // یک دور دیگر برای نت‌هایی که سخت بودند؛ امتیاز بهتر حساب می‌شود
     const weak = scores.filter((x) => x.sc < 50).slice(0, 3);
@@ -837,9 +850,9 @@ function runSeq(L) {
       await sleep(1500);
       if (aborted) return;
       for (const [k, x] of weak.entries()) {
-        const sc = await singNote(x.target, `تکرار: نت ${fa(k + 1)} از ${fa(weak.length)}`);
-        if (sc == null) return;
-        x.sc = Math.max(x.sc, sc);
+        const got = await singNote(x.target, `تکرار: نت ${fa(k + 1)} از ${fa(weak.length)}`);
+        if (!got) return;
+        if (got.sc > x.sc) Object.assign(x, got);
       }
     }
     off();
@@ -847,6 +860,7 @@ function runSeq(L) {
     stopMic();
     const total = Math.round(scores.reduce((a, b) => a + b.sc, 0) / scores.length);
     const levelNote = finishScored(L, level, total);
+    recordNotes(scores.filter((x) => x.dev != null).map((x) => ({ step: x.target, score: x.sc, dev: x.dev })));
     $('#ctl').classList.add('hidden');
     st.textContent = 'تموم شد ✓';
     const best = store.get().lessons[L.id].best;
@@ -1040,16 +1054,31 @@ function runEar(L) {
   $('#again').onclick = () => { if (q && waiting) play(); };
 }
 
+const WEEKDAYS = ['ی', 'د', 'س', 'چ', 'پ', 'ج', 'ش']; // از یکشنبه
+const shortDate = (t) => new Date(t).toLocaleDateString('fa-IR', { month: 'short', day: 'numeric' });
+
 function viewProgress() {
   const s = store.get();
-  const scored = s.sessions.filter((x) => x.score != null).slice(-20);
-  const lessonTitle = (id) => LESSONS.find((l) => l.id === id)?.title || id;
   const vt = s.range ? estimateVoiceType(s.range.low, s.range.high, s.settings.voice) : null;
-  const W = 320, H = 150, bw = scored.length ? W / scored.length : 0;
-  const bars = scored.map((x, i) => {
-    const h = Math.max(2, (x.score / 100) * (H - 20));
-    return `<rect x="${i * bw + 2}" y="${H - h}" width="${Math.max(2, bw - 4)}" height="${h}" rx="3" class="${x.score >= 80 ? 'bar-good' : 'bar'}"><title>${esc(lessonTitle(x.lesson))}: ${fa(x.score)}٪</title></rect>`;
-  }).join('');
+  const week = weekSummary(s);
+  const trends = lessonTrends(s, LESSONS.filter((l) => ['seq', 'ear'].includes(l.kind)));
+  const growth = rangeGrowth(s);
+  const notes = noteStats(s);
+  const holds = s.sustain.slice(-10).map((x) => x.secs);
+  const DIRECTION = { up: '↑ رو به بهتر شدن', down: '↓ کمی افت کرده', flat: '→ ثابت' };
+  const TENDENCY = { sharp: 'معمولاً کمی بالا ↑', flat: 'معمولاً کمی پایین ↓', true: 'دقیق ✓' };
+
+  const rangeBars = s.rangeHistory.slice(-12).map((r) => ({
+    low: r.low,
+    high: r.high,
+    title: `${shortDate(r.date)}: ${stepName(r.low).fa} تا ${stepName(r.high).fa}`,
+  }));
+  const weekLine = [
+    week.count ? `${fa(week.count)} تمرین در ۷ روز اخیر` : 'این هفته هنوز تمرین نکردی',
+    week.prevCount ? `هفته‌ی قبلش ${fa(week.prevCount)} تا` : '',
+  ].filter(Boolean).join(' · ');
+  const avgLine = week.avg == null ? '' : `میانگین امتیاز: ${fa(week.avg)}٪${week.prevAvg == null ? '' : ` (هفته‌ی قبلش ${fa(week.prevAvg)}٪)`}`;
+
   main.innerHTML = `
     <h1 class="page-title">پیشرفت من</h1>
     <section class="stats">
@@ -1058,20 +1087,63 @@ function viewProgress() {
       <div class="stat"><b>${fa(s.sessions.length)}</b><span>تمرین</span></div>
     </section>
     <div class="card">
+      <h2 class="h3">این هفته</h2>
+      <ol class="week">
+        ${week.days.map((d) => `<li class="${d.practised ? 'on' : ''}${d.today ? ' today' : ''}">
+          <span class="dot" aria-hidden="true">${d.practised ? '✓' : ''}</span>
+          <span class="wd" aria-hidden="true">${WEEKDAYS[d.weekday]}</span>
+          <span class="visually-hidden">${d.today ? 'امروز' : shortDate(`${d.key}T12:00`)}: ${d.practised ? 'تمرین کردی' : 'بدون تمرین'}</span>
+        </li>`).join('')}
+      </ol>
+      <p>${weekLine}</p>
+      ${avgLine ? `<p class="muted small">${avgLine}</p>` : ''}
+    </div>
+    <div class="card">
       <h2 class="h3">صدای من</h2>
       ${s.range
         ? `<p>محدوده: <b>${esc(stepName(s.range.low).fa)}</b> تا <b>${esc(stepName(s.range.high).fa)}</b> (${fa(s.range.high - s.range.low)} نیم‌پرده)</p>
            <p>تیپ صدای تخمینی: <b>${esc(vt.fa)}</b></p>`
         : '<p class="muted">هنوز تست محدوده رو انجام ندادی.</p><a class="btn small" href="#/lesson/range">انجام تست</a>'}
+      ${growth ? `
+        ${rangeChart(rangeBars, {
+          label: `محدوده‌ی صدا در ${fa(rangeBars.length)} تست آخر`,
+          lowName: stepName(growth.last.low).fa,
+          highName: stepName(growth.last.high).fa,
+        })}
+        <p class="muted small">${fa(growth.tests)} بار تست کردی. ${growth.gained > 0
+          ? `از اولین تست، محدوده‌ات ${fa(growth.gained)} نیم‌پرده بیشتر شده.`
+          : growth.gained < 0 ? 'آخرین تست کمی کوچیک‌تر از اولی بود؛ محدوده روز به روز فرق می‌کنه و این طبیعیه.' : 'محدوده‌ات از اولین تست تغییری نکرده.'}</p>` : ''}
       ${s.home != null ? `<p>نت خانه: <b>${esc(stepName(s.home).fa)}</b></p>` : ''}
-      ${bestSustain() ? `<p>طولانی‌ترین نت: <b>${fa(bestSustain())} ثانیه</b></p>` : ''}
+      ${bestSustain() ? `
+        <div class="trend">
+          <span>طولانی‌ترین نت: <b>${fa(bestSustain())} ثانیه</b>${holds.length > 1 ? `<br><span class="muted small">آخرین بار ${fa(holds.at(-1))} ثانیه</span>` : ''}</span>
+          ${holds.length > 1 ? sparkline(holds, { max: 0, label: `مدت نگه داشتن نت در ${fa(holds.length)} تمرین آخر، به ثانیه: ${holds.map(fa).join('، ')}` }) : ''}
+        </div>` : ''}
     </div>
     <div class="card">
-      <h2 class="h3">امتیاز ۲۰ تمرین آخر</h2>
-      ${scored.length
-        ? `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="نمودار امتیاز تمرین‌ها"><line x1="0" x2="${W}" y1="${H - (0.8 * (H - 20))}" y2="${H - (0.8 * (H - 20))}" class="goal"/>${bars}</svg>
-           <p class="muted small">خط‌چین: امتیاز ۸۰٪</p>`
-        : '<p class="muted">بعد از اولین تمرین، نمودارت اینجا نشون داده می‌شه.</p>'}
+      <h2 class="h3">روند درس‌ها</h2>
+      ${trends.length ? trends.map((t) => {
+        const L = lessonById(t.id);
+        return `<div class="trend">
+          <span><b>${L.icon} ${esc(L.title)}</b><br>
+            <span class="muted small">آخرین ${fa(t.last)}٪ · بهترین ${fa(t.best)}٪${t.direction ? ` · ${DIRECTION[t.direction]}` : ''}</span></span>
+          ${sparkline(t.scores, { goal: PASS, label: `امتیاز ${fa(t.scores.length)} تمرین آخر: ${t.scores.map(fa).join('، ')}` })}
+        </div>`;
+      }).join('') + `<p class="muted small">خط‌چین: امتیاز ${fa(PASS)}٪</p>`
+        : '<p class="muted">بعد از اولین تمرین امتیازدار، روندت اینجا نشون داده می‌شه.</p>'}
+    </div>
+    <div class="card">
+      <h2 class="h3">نت‌های من</h2>
+      ${notes.length ? `
+        <ul class="note-scores">
+          ${notes.map((n) => `<li class="note-row">
+            <span><b>${esc(stepName(n.step + 60).fa)}</b></span>
+            <progress max="100" value="${n.score}" aria-label="دقت روی ${esc(stepName(n.step + 60).fa)}"></progress>
+            <span class="muted small">${fa(n.score)}٪${n.tendency ? ` · ${TENDENCY[n.tendency]}` : ''}</span>
+          </li>`).join('')}
+        </ul>
+        <p class="muted small">از درس‌های «بشنو و تکرار کن» حساب می‌شه؛ نت‌هایی که تمرین بیشتری می‌خوان بالاترن.</p>`
+        : '<p class="muted">بعد از اولین درس «بشنو و تکرار کن»، اینجا می‌بینی روی کدوم نت‌ها دقیق‌تری و کدوم‌ها رو معمولاً بالا یا پایین می‌خونی.</p>'}
     </div>
     <div class="card">
       <h2 class="h3">درس‌ها</h2>

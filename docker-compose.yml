@@ -1,7 +1,8 @@
 services:
   avazyar:
     build: .
-    image: avazyar:0.3
+    # deploy/deploy.sh sets AVAZYAR_TAG to the app version, so earlier images stay available for rollback
+    image: avazyar:${AVAZYAR_TAG:-local}
     container_name: avazyar
     restart: unless-stopped
     ports:

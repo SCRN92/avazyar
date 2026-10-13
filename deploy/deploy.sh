@@ -18,9 +18,11 @@ node --test
 echo "==> copy to $host:$dir"
 rsync -az --exclude .git --exclude .DS_Store --exclude node_modules ./ "$host:$dir/"
 
-echo "==> build and restart"
+version=$(sed -n "s/.*AVAZYAR_VERSION = '\(.*\)'.*/\1/p" js/version.js)
+
+echo "==> build and restart (image avazyar:$version)"
 # The plain "default" builder always exists, whatever builder the server has selected
-ssh "$host" "cd '$dir' && BUILDX_BUILDER=\${BUILDX_BUILDER:-default} docker compose up -d --build --quiet-pull 2>&1 | tail -5"
+ssh "$host" "cd '$dir' && AVAZYAR_TAG='$version' BUILDX_BUILDER=\${BUILDX_BUILDER:-default} docker compose up -d --build --quiet-pull 2>&1 | tail -5"
 
 echo "==> wait for healthy"
 ssh "$host" '
@@ -33,5 +35,4 @@ ssh "$host" '
   [ "$s" = healthy ]
 '
 
-version=$(sed -n "s/.*AVAZYAR_VERSION = '\(.*\)'.*/\1/p" js/version.js)
 echo "==> deployed version $version"

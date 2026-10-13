@@ -1,11 +1,13 @@
 // ذخیره‌ی پیشرفت روی خود گوشی (localStorage)
+import { dayKey } from './stats.js';
+
 const KEY = 'avazyar.v1';
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 
 // نسخه‌ی ساختار داده‌ها؛ با هر تغییر ساختار یکی زیاد می‌شود و یک تابع به MIGRATIONS اضافه می‌شود
-export const SCHEMA = 3;
+export const SCHEMA = 4;
 const DEFAULT = {
   schema: SCHEMA,
   settings: { mode: 'irani', voice: null, micGate: null, hideInstallHint: false },
@@ -13,6 +15,7 @@ const DEFAULT = {
   rangeHistory: [],
   home: null,
   sustain: [],
+  notes: {},
   lessons: {},
   sessions: [],
   days: [],
@@ -26,6 +29,9 @@ const MIGRATIONS = {
   2: (s) => {
     s.sustain = [];
     for (const L of Object.values(isObj(s.lessons) ? s.lessons : {})) if (isObj(L)) L.level = 0;
+  },
+  3: (s) => {
+    s.notes = {};
   },
 };
 
@@ -54,6 +60,13 @@ export function normalize(raw) {
       .filter((x) => isObj(x) && num(x.date) != null && num(x.secs) != null)
       .map((x) => ({ date: x.date, secs: x.secs, steady: num(x.steady) }));
   }
+  if (isObj(s.notes)) {
+    for (const [key, v] of Object.entries(s.notes)) {
+      if (/^\d{1,2}(\.5)?$/.test(key) && isObj(v) && num(v.n) > 0 && num(v.score) != null && num(v.dev) != null) {
+        d.notes[key] = { n: v.n, score: v.score, dev: v.dev };
+      }
+    }
+  }
   if (Array.isArray(s.sessions)) {
     d.sessions = s.sessions
       .filter((x) => isObj(x) && num(x.date) != null && typeof x.lesson === 'string')
@@ -68,11 +81,17 @@ export function normalize(raw) {
   return d;
 }
 
+// اگر داده‌های ذخیره‌شده از نسخه‌ی جدیدتری از برنامه باشند (مثلاً بعد از برگرداندن برنامه به نسخه‌ی قبل)،
+// دست‌نخورده می‌مانند و تا وقتی کاربر خودش نخواهد چیزی رویشان نوشته نمی‌شود
+let frozen = false;
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s) return normalize(s);
-  } catch {}
+  } catch (e) {
+    frozen = e?.message === 'newer';
+  }
   return clone(DEFAULT);
 }
 
@@ -80,7 +99,11 @@ let state = load();
 
 export const store = {
   get: () => state,
+  get frozen() {
+    return frozen;
+  },
   save() {
+    if (frozen) return;
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {}
   },
   update(fn) {
@@ -89,19 +112,17 @@ export const store = {
   },
   reset() {
     state = clone(DEFAULT);
+    frozen = false;
     this.save();
   },
 };
 
-const fmt = (d) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
 export function streak(now = new Date()) {
   const set = new Set(state.days);
   const d = new Date(now);
-  if (!set.has(fmt(d))) d.setDate(d.getDate() - 1);
+  if (!set.has(dayKey(d))) d.setDate(d.getDate() - 1);
   let n = 0;
-  while (set.has(fmt(d))) {
+  while (set.has(dayKey(d))) {
     n++;
     d.setDate(d.getDate() - 1);
   }
@@ -117,7 +138,7 @@ export function recordSession(lessonId, score, now = new Date()) {
     L.last = score;
     if (score != null && (L.best == null || score > L.best)) L.best = score;
     s.lessons[lessonId] = L;
-    const t = fmt(now);
+    const t = dayKey(now);
     if (!s.days.includes(t)) s.days.push(t);
   });
 }
@@ -145,6 +166,20 @@ export function recordSustain(secs, steady, now = new Date()) {
 
 export const bestSustain = () => state.sustain.reduce((a, x) => Math.max(a, x.secs), 0);
 
+// دقت روی هر نت، بدون توجه به اکتاو. list: [{ step, score, dev }] که dev میانگین انحراف (سنت، مثبت یعنی بالاتر) است
+export function recordNotes(list) {
+  store.update((s) => {
+    for (const { step, score, dev } of list) {
+      const key = String(((step % 12) + 12) % 12);
+      const v = s.notes[key] || { n: 0, score: 0, dev: 0 };
+      v.n++;
+      v.score += score;
+      v.dev += Math.max(-100, Math.min(100, dev));
+      s.notes[key] = v;
+    }
+  });
+}
+
 // ---------- پشتیبان‌گیری ----------
 
 export function exportData(now = new Date()) {
@@ -161,5 +196,6 @@ export function importData(text) {
   }
   if (!isObj(file) || file.app !== 'avazyar') throw new Error('invalid');
   state = normalize(file.data);
+  frozen = false;
   store.save();
 }
