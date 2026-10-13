@@ -14,7 +14,6 @@ Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.3. It is a small 
 - Detects sung pitch in real time on the device, including quarter-tones (koron and sori).
 - Nine lessons: warm-up, range test, home note, breath and sustain, match a note, do-re-mi, a first quarter-tone exercise in Shur, and two ear-training lessons that need no microphone.
 - Levels: lessons get stricter as scores improve, and missed notes are offered again.
-- A daily session of 5, 10 or 15 minutes that the app plans from the learner's own progress.
 - A free tuner with a live pitch graph and a drone note for interval practice.
 - A microphone check that adapts to room noise, and a screen that stays awake while practising.
 - Scores, a daily streak and a chart of the last 20 scores.
@@ -98,7 +97,7 @@ Turn six lessons into a course that adapts to the learner.
 | C6 | Drone practice: a sustained tonic to sing intervals against | A traditional and effective way to learn where the notes sit | S | Done. Needs headphones; not yet tried with a real microphone |
 | C7 | New units: Mahur first (closest to the familiar major scale), then the Shur family (Dashti, Abu Ata, Bayat-e Tork, Afshari), with short concept cards for شاهد, ایست and فرود | This is the content learners came for. Written with a teacher (decision D5) | L | Open: needs a teacher (D5) |
 | C8 | Breath and sustain: hold a note and measure length and steadiness | Breath support is the foundation of avaz and is easy to measure with what already exists | S | Done |
-| C9 | A daily session of 5, 10 or 15 minutes built from warm-up, weak spots and one new thing | "Suggested for today" currently picks a single lesson | M | Done: planned from warm-up, one new lesson and the weakest practised ones; steps can be skipped |
+| C9 | A daily session of 5, 10 or 15 minutes built from warm-up, weak spots and one new thing | "Suggested for today" currently picks a single lesson | M | Done, not yet deployed: planned from warm-up, one new lesson and the weakest practised ones; steps can be skipped |
 
 ### v0.4 — Hear yourself, see progress
 
