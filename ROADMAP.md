@@ -7,7 +7,7 @@
 
 ## 1. Where we are
 
-Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.0. It is a small installable web app with no server-side logic.
+Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.1. It is a small installable web app with no server-side logic.
 
 **What it does today**
 
@@ -15,6 +15,7 @@ Avazyar is live at https://avazyar.noonbarbari.xyz, running v0.4.0. It is a smal
 - Nine lessons: warm-up, range test, home note, breath and sustain, match a note, do-re-mi, a first quarter-tone exercise in Shur, and two ear-training lessons that need no microphone.
 - Levels: lessons get stricter as scores improve, and missed notes are offered again.
 - A daily session of 5, 10 or 15 minutes that the app plans from the learner's own progress.
+- Hear yourself: after a sung lesson, each note can be replayed as the reference followed by the learner's own attempt. Recordings stay in memory and are never stored or sent.
 - A free tuner with a live pitch graph and a drone note for interval practice.
 - A microphone check that adapts to room noise, and a screen that stays awake while practising.
 - Scores, a daily streak, and a progress page with the week's practice, the trend of each lesson, the voice range over time and accuracy per note.
@@ -104,7 +105,7 @@ Turn six lessons into a course that adapts to the learner.
 
 | ID | Item | Why | Size | Status |
 |---|---|---|---|---|
-| P1 | Record and play back an attempt next to the reference, on the device only and deleted automatically | Hearing your own voice is the fastest feedback a singer can get | M | Open |
+| P1 | Record and play back an attempt next to the reference, on the device only and deleted automatically | Hearing your own voice is the fastest feedback a singer can get | M | Done: each sung note is recorded in memory; the result screen plays the reference, then the attempt |
 | P2 | Progress that means something: trends per lesson, range over time, accuracy per note, a weekly summary | Only the latest range is kept, and the chart mixes all lessons into one row of bars | M | Done: weekly summary, per-lesson trends, range over time, accuracy and tendency per note |
 | P3 | Share a progress report through the phone's share sheet | The app tells learners to get feedback from a teacher; this gives them something to show | S | Open |
 | P4 | Shareable exercises: encode an exercise in a link so a teacher can send "practise this" | Adds a teacher workflow with no server and no accounts | M | Open |

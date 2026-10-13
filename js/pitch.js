@@ -153,10 +153,52 @@ export class PitchInput {
     return () => this.listeners.delete(fn);
   }
 
+  // ضبط موقت صدای ورودی، فقط در حافظه‌ی همین صفحه. اگر مرورگر ضبط را پشتیبانی نکند false برمی‌گرداند.
+  startRecording() {
+    if (!this.running || typeof MediaRecorder === 'undefined') return false;
+    this.stopRecording();
+    try {
+      let stream = this.stream;
+      if (!stream) {
+        // صدای آزمایشی (?sim) میکروفون واقعی ندارد؛ از خود گره‌ی صدا یک جریان می‌سازیم
+        if (!this.tap) {
+          this.tap = this.ctx.createMediaStreamDestination();
+          this.source.connect(this.tap);
+        }
+        stream = this.tap.stream;
+      }
+      const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+      const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      this.recDone = new Promise((resolve) => {
+        rec.onstop = () => resolve(chunks.length ? new Blob(chunks, { type: rec.mimeType }) : null);
+        rec.onerror = () => resolve(null);
+      });
+      rec.start();
+      this.rec = rec;
+      return true;
+    } catch {
+      this.rec = null;
+      return false;
+    }
+  }
+
+  // ضبط را تمام می‌کند و صدای ضبط‌شده را برمی‌گرداند (اگر چیزی ضبط نشده باشد null)
+  async stopRecording() {
+    const rec = this.rec;
+    if (!rec) return null;
+    this.rec = null;
+    if (rec.state !== 'inactive') rec.stop();
+    return this.recDone;
+  }
+
   stop() {
     if (!this.running) return;
     this.running = false;
     cancelAnimationFrame(this.raf);
+    if (this.rec && this.rec.state !== 'inactive') this.rec.stop();
+    this.rec = this.tap = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.simOsc?.stop();
     this.source?.disconnect();

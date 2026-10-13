@@ -338,6 +338,10 @@ a { color: var(--primary); text-decoration: none; }
 .range-chart .bar-now { fill: var(--primary); }
 .chart-label { fill: var(--muted); font-size: 12px; font-family: inherit; }
 
+.clip-cell { display: flex; align-items: center; gap: 12px; }
+.clip-cell .btn[aria-pressed="true"] { background: var(--primary); color: var(--primary-ink); border-color: transparent; }
+.note-scores li:has(.clip-cell) { align-items: center; }
+
 .note-row { align-items: center; }
 .note-row > :first-child { flex: none; width: 4.5em; }
 .note-row > :last-child { flex: none; width: 11.5em; text-align: end; }

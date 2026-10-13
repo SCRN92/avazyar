@@ -759,9 +759,35 @@ function runSeq(L) {
   let aborted = false;
   let off = null;
   let cur = null;
-  cleanup = () => { aborted = true; off?.(); lane.stop(); };
+  let playing = null; // صدایی که الان در صفحه‌ی نتیجه پخش می‌شود
+  cleanup = () => { aborted = true; off?.(); lane.stop(); playing?.stop(); };
 
   const scoreOf = (c) => (c.countedMs > 0 ? Math.round((100 * c.inTolMs) / c.countedMs) : 0);
+  // اول نت درست و بعد صدای ضبط‌شده‌ی خود کاربر روی همان نت
+  const compare = async (x, btn) => {
+    if (playing) return;
+    playing = { stop() {} };
+    btn.setAttribute('aria-pressed', 'true');
+    try {
+      const ctx = audio();
+      const buffer = await ctx.decodeAudioData(await x.clip.arrayBuffer());
+      await playTone(ctx, midiToFreq(x.target), 0.8);
+      if (!aborted) {
+        await new Promise((resolve) => {
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(ctx.destination);
+          src.onended = resolve;
+          playing = { stop: () => { src.onended = null; src.stop(); resolve(); } };
+          src.start();
+        });
+      }
+    } catch {
+      btn.disabled = true; // این مرورگر نمی‌تواند ضبط خودش را پخش کند
+    }
+    playing = null;
+    btn.setAttribute('aria-pressed', 'false');
+  };
   const finishNote = () => {
     if (!cur || cur.done) return;
     cur.done = true;
@@ -777,6 +803,7 @@ function runSeq(L) {
     c.phase = 'sing';
     c.singStart = performance.now();
     c.lastT = null;
+    input.startRecording();
     st.textContent = 'حالا تو بخون 🎤';
     st.className = 'status sing';
   };
@@ -793,6 +820,7 @@ function runSeq(L) {
       cur = { target, tol, phase: 'listen', voicedMs: 0, countedMs: 0, inTolMs: 0, devMs: 0, done: false, resolve };
       hear();
     });
+    const clip = await input.stopRecording();
     if (aborted) return null;
     const heard = cur.voicedMs > 0;
     st.className = 'status';
@@ -800,7 +828,7 @@ function runSeq(L) {
     // dev: میانگین فاصله از نت هدف به سنت (مثبت یعنی بالاتر)؛ اگر صدایی نبود null
     const dev = cur.countedMs > 0 ? cur.devMs / cur.countedMs : null;
     await sleep(1300);
-    return aborted ? null : { sc, dev };
+    return aborted ? null : { sc, dev, clip: heard ? clip : null };
   };
 
   $('#go').onclick = async () => {
@@ -870,13 +898,21 @@ function runSeq(L) {
         <div class="score">${fa(total)}٪</div>
         <p class="muted">بهترین امتیازت در این درس: ${fa(best)}٪</p>
         ${levelNote}
-        <ul class="note-scores">${scores.map((x) => `<li><span>${esc(stepName(x.target).fa)}</span><span class="${x.sc >= 80 ? 'good' : x.sc >= 50 ? '' : 'warn'}">${fa(x.sc)}٪</span></li>`).join('')}</ul>
+        <ul class="note-scores">${scores.map((x, i) => `<li>
+          <span>${esc(stepName(x.target).fa)}</span>
+          <span class="clip-cell">
+            ${x.clip ? `<button class="btn small" data-clip="${i}" aria-pressed="false" aria-label="مقایسه‌ی صدای خودت با نت ${esc(stepName(x.target).fa)}">▶ بشنو</button>` : ''}
+            <span class="${x.sc >= 80 ? 'good' : x.sc >= 50 ? '' : 'warn'}">${fa(x.sc)}٪</span>
+          </span>
+        </li>`).join('')}</ul>
+        ${scores.some((x) => x.clip) ? '<p class="muted small">«بشنو» اول نت درست و بعد صدای خودت رو پخش می‌کنه. این ضبط فقط روی همین صفحه‌ست؛ با بستنش پاک می‌شه و هیچ‌جا فرستاده نمی‌شه.</p>' : ''}
       </div>
       <div class="row">
         <button class="btn grow" id="retry">دوباره</button>
         ${nextLink(L, 'grow', '#/', 'خانه')}
       </div>`;
     $('#retry').onclick = () => route();
+    main.querySelectorAll('[data-clip]').forEach((b) => { b.onclick = () => compare(scores[b.dataset.clip], b); });
   };
   $('#again').onclick = () => { if (cur && !cur.done && cur.phase === 'sing') hear(); };
   $('#skip').onclick = () => finishNote();
